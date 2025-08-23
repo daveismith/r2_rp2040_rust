@@ -1,0 +1,248 @@
+// Dummy I2C device driver, using `embedded-hal-async`
+
+use bitflags::bitflags;
+use core::fmt::Debug;
+use embassy_time::Timer;
+use libm::atan2;
+
+const PI_F32: f32 = 3.1415927410e+00;
+
+pub struct Tlv493dDriver<I2C: embedded_hal_async::i2c::I2c> {
+    i2c: I2C,
+    addr: u8,
+    initial: [u8; 10],
+    last_frm: u8,
+}
+
+/// Read registers for the Tlv493d
+pub enum ReadRegisters {
+    Bx = 0x00,    // X direction flux (Bx[11..4])
+    By = 0x01,    // Y direction flux (By[11..4])
+    Bz = 0x02,    // X direction flux (Bz[11..4])
+    Temp = 0x03, // Temperature high bits, frame counter, channel, (Temp[11..8] | FRM[1..0] | CH[1..0])
+    Bx2 = 0x04,  // Lower X and Y flux (Bx[3..0] | Bx[3..0])
+    Bz2 = 0x05,  // Flags + Lower Z flux (Reserved | T | FF | PD | Bz[3..0])
+    Temp2 = 0x06, // Temperature low bits (Temp[7..0])
+
+    FactSet1 = 0x07,
+    FactSet2 = 0x08,
+    FactSet3 = 0x09,
+}
+
+/// Write registers for the Tlv493d
+#[allow(dead_code)]
+pub enum WriteRegisters {
+    Res = 0x00,   // Reserved
+    Mode1 = 0x01, // Mode 1 register (P | IICAddr[1..0] | Reserved[1..0] | INT | FAST | LOW)
+    Res2 = 0x02,  // Reserved
+    Mode2 = 0x03, // Mode 2 register (T | LP | PT | Reserved[4..0])
+}
+
+/// TLV493D Measurement values
+#[derive(Debug, PartialEq, Clone)]
+pub struct Values {
+    x: f32,    // X axis magnetic flux (mT)
+    y: f32,    // Y axis magnetic flux (mT)
+    z: f32,    // Z axis magnetic flux (mT)
+    temp: f32, // Device temperature (C)
+}
+
+/// Device operating mode
+/// Note that in most cases the mode is a combination of mode and IRQ flags
+#[allow(dead_code)]
+pub enum Mode {
+    Disabled,      // Reading disabled
+    Master,        // Master initiated mode (reading occurs after readout)
+    Fast,          // Fast mode (3.3kHz)
+    LowPower,      // Low power mode (100Hz)
+    UltraLowPower, // Ultra low power mode (10Hz)
+}
+
+bitflags! {
+    /// Device Mode1 register
+    #[derive(Debug)]
+    pub struct Mode1: u8 {
+        const PARITY     = 0b1000_0000;     // Parity of configuration map, must be calculated prior to write command
+        const I2C_ADDR_1 = 0b0100_0000;     // Set I2C address top bit in bus configuration
+        const I2C_ADDR_0 = 0b0010_0000;     // Set I2C address bottom bit in bus configuration
+        const IRQ_EN     = 0b0000_0100;      // Enable read-complete interrupts
+        const FAST       = 0b0000_0010;      // Enable fast mode (must be disabled for power-down)
+        const LOW        = 0b0000_0001;      // Low power mode
+    }
+}
+
+bitflags! {
+    /// Device Mode2 register
+    #[derive(Debug)]
+    pub struct Mode2: u8 {
+        const TEMP_DISABLE   = 0b1000_0000;     // DISABLE temperature measurement
+        const LOW_POW_PERIOD = 0b0100_0000;     // Set low power period ("0": 100ms, "1": 12ms)
+        const PARITY_TEST_EN = 0b0010_0000;     // Enable / Disable parity test
+    }
+}
+
+impl<I2C> Tlv493dDriver<I2C>
+where
+    I2C: embedded_hal_async::i2c::I2c,
+{
+    pub async fn new(i2c_dev: I2C, address: u8, mode: Mode) -> Self {
+        let mut s = Self {
+            i2c: i2c_dev,
+            addr: address,
+            initial: [0u8; 10],
+            last_frm: 0xff,
+        };
+
+        s.configure(mode, true).await;
+
+        s
+    }
+
+    pub async fn configure(&mut self, mode: Mode, reset: bool) {
+        //-> Result<(), Error<I2cErr, DelayErr>> {
+        // Startup per fig. 5.1 in TLV493D-A1B6 user manual
+
+        // Reset if enabled
+        if reset {
+            // First we need to reset
+            log::debug!("Resetting device");
+            // Write recovery value
+            let _ = self.i2c.write(self.addr, &[0xFF]).await; //.map_err(Error::I2c)?;
+
+            // Wait for startup delay
+            //self._delay.delay_ms(40).map_err(Error::Delay)?;
+            Timer::after_millis(40).await;
+
+            // Restart The Sensor
+            let _ = self.i2c.write(0x00, &[0xff]).await;
+
+            log::debug!("Read device initial state");
+
+            // Read initial bitmap from device
+            let _ = self.i2c.read(self.addr, &mut self.initial[..]).await;
+            //.map_err(Error::I2c)?;
+
+            log::debug!("Initial state: {:02x?}", self.initial);
+        }
+
+        // Parse out initial mode settings
+        let mut m1 = Mode1::from_bits_retain(self.initial[ReadRegisters::FactSet1 as usize]);
+        let m2 = Mode2::from_bits_retain(self.initial[ReadRegisters::FactSet3 as usize]);
+
+        log::debug!("Current config: {:?} ({:02x?})", m1, self.initial);
+
+        // Clear mode flags
+        m1.remove(Mode1::PARITY);
+        m1.remove(Mode1::FAST | Mode1::LOW);
+
+        match mode {
+            Mode::Disabled => (),
+            Mode::Master => m1 |= Mode1::FAST | Mode1::LOW,
+            Mode::Fast => m1 |= Mode1::FAST | Mode1::IRQ_EN,
+            Mode::LowPower => m1 |= Mode1::LOW | Mode1::IRQ_EN,
+            Mode::UltraLowPower => m1 |= Mode1::IRQ_EN,
+        }
+
+        let mut cfg = [
+            0x00,
+            m1.bits(),
+            self.initial[ReadRegisters::FactSet2 as usize],
+            m2.bits(),
+        ];
+
+        self.initial[ReadRegisters::FactSet1 as usize] = m1.bits();
+        self.initial[ReadRegisters::FactSet3 as usize] = m2.bits();
+
+        let mut parity = 0;
+        for v in &cfg {
+            for i in 0..8 {
+                if v & (1 << i) != 0 {
+                    parity += 1;
+                }
+            }
+        }
+        if parity % 2 == 0 {
+            m1 |= Mode1::PARITY;
+            cfg[1] = m1.bits();
+        }
+
+        log::debug!(
+            "Writing config: Mode1: {:?} Mode2: {:?} (cfg: {:02x?}",
+            m1,
+            m2,
+            cfg
+        );
+
+        let _ = self.i2c.write(self.addr, &cfg).await; //.map_err(Error::I2c)?;
+
+        //Ok(())
+    }
+
+    pub async fn read_raw(&mut self) -> [i16; 4] {
+        let mut v = [0i16; 4];
+
+        // Read data from device
+        let mut b = [0u8; 7];
+        match self.i2c.read(self.addr, &mut b[..]).await {
+            Ok(()) => {},
+            Err(err) => log::info!("I2C Error: {:?}", err)
+        }
+
+        let frm = b[3] & 0b0000_1100;
+        if self.last_frm == frm {
+            log::info!("ADC Lockup");
+        } else {
+            self.last_frm = frm;
+        }
+
+        // Convert to values
+        // Double-cast here required for sign-extension
+        v[0] = (b[ReadRegisters::Bx as usize] as i8 as i16) << 4
+            | ((b[ReadRegisters::Bx2 as usize] & 0xF0) >> 4) as i16;
+        v[1] = (b[ReadRegisters::By as usize] as i8 as i16) << 4
+            | (b[ReadRegisters::Bx2 as usize] & 0x0F) as i16;
+        v[2] = (b[ReadRegisters::Bz as usize] as i8 as i16) << 4
+            | (b[ReadRegisters::Bz2 as usize] & 0x0F) as i16;
+        v[3] = (b[ReadRegisters::Temp as usize] as i8 as i16 & 0xF0) << 4
+            | (b[ReadRegisters::Temp2 as usize] as i16 & 0xFF);
+
+        log::debug!("Read data {:02x?} values: {:04x?}", b, v);
+
+        v
+    }
+
+    /// Read and convert values from the sensor
+    pub async fn read(&mut self) -> Values {
+        // -> Result<Values, Error<I2cErr, DelayErr>> {
+        let raw = self.read_raw().await;
+
+        //Ok(
+        Values {
+            x: raw[0] as f32 * 0.098f32,
+            y: raw[1] as f32 * 0.098f32,
+            z: raw[2] as f32 * 0.098f32,
+            temp: (raw[3] - 340) as f32 * 1.1f32 + 24.2f32,
+        }
+        //)
+    }
+
+    #[allow(dead_code)]
+    pub async fn read_angle_f32(&mut self) -> f32 {
+        //-> Result<f32, Error<I2cErr, DelayErr>> {
+        // Read values
+        let v = self.read().await;
+
+        // https://en.wikipedia.org/wiki/Atan2
+        let val = atan2(v.x as f64, v.y as f64) as f32;
+
+        (val * 180.0) / PI_F32
+    }
+
+    #[allow(dead_code)]
+    pub async fn read_angle_and_temp_f32(&mut self) -> (f32, f32) {
+        let v = self.read().await;
+        let val = atan2(v.x as f64, v.y as f64) as f32;
+        let angle = (val * 180.0) / PI_F32;
+        (angle, v.temp)
+    }
+}

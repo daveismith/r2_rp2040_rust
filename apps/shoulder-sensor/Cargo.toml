@@ -1,0 +1,100 @@
+[package]
+name = "shoulder-sensor"
+version = "0.1.1"
+edition = "2021"
+authors = ["David Smith <1734595+daveismith@users.noreply.github.com>"]
+license = "MIT or Apache-2.0"
+build = "build.rs"
+
+[features]
+default = ["defmt"]
+defmt = []
+
+[build-dependencies]
+built = { version = "0.8.0", features = ["git2"] }
+
+[dependencies]
+embassy-rp = { version = "0.7.0", features = [
+    "defmt",
+    "unstable-pac",
+    "time-driver",
+    "critical-section-impl",
+    "rp2040"
+] }
+embassy-embedded-hal = { version = "0.4.0", features = ["defmt"] }
+embassy-executor = { version = "0.8.0", features = [
+    # "task-arena-size-98304",
+    "arch-cortex-m",
+    "executor-thread",
+    "executor-interrupt",
+    "defmt"
+] }
+embassy-sync = { version = "0.7.0", features = ["defmt"] }
+embassy-time = { version = "0.4.0", features = [
+    "defmt",
+    "defmt-timestamp-uptime"
+] }
+embassy-futures = { version = "0.1.1" }
+embassy-usb = { version = "0.5.0", features = ["defmt"] }
+embassy-usb-logger = { version = "0.5.0" }
+embassy-boot-rp = { version = "0.7.0" }
+
+defmt = "1.0.1"
+defmt-rtt = "1.0.0"
+
+cortex-m = { version = "0.7.7", features = ["inline-asm"] }
+cortex-m-rt = "0.7.5"
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+embedded-alloc = "0.6.0"
+static_cell = "2.1.1"
+
+embedded-io-async = "0.6.1"
+async-trait = "0.1"
+
+
+log = { version = "0.4.27", features = ["max_level_info"]}
+noline = "0.5.1"
+fixed-queue = "0.5.1"
+format_no_std = "1.2.0"
+smart-leds = "0.4.0"
+
+mcp25xx = { version = "0.3.0", features = ["mcp25625"] }
+embedded-can = "0.4.1"
+embedded-hal-async = "1.0.0"
+embedded-hal-bus = "0.3.0"
+portable-atomic = { version = "1.11.1", features = ["critical-section"] }
+heapless = "0.8.0"
+embedded-storage-async = "0.4.1"
+
+sequential-storage = "5.0.0"
+bitflags = "2.9.1"
+libm = "0.2.11"
+no-std-moving-average = "0.3.0"
+
+slice-copy = "0.3.0"
+num_enum = { version = "0.7.4", default-features = false, features = [] }
+
+[profile.release]
+codegen-units = 1
+debug = false
+lto = true
+opt-level = 'z'
+strip = true  # Automatically strip symbols from the binary.
+
+
+[profile.dev]
+debug = 2
+lto = true
+opt-level = "z"
+
+[patch.crates-io]
+# make sure to get the latest git rev from github, you can see the latest one here:
+# https://github.com/embassy-rs/embassy/commits/main/
+#embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
+#embassy-executor     = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
+#embassy-rp           = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
+#embassy-sync         = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
+#embassy-time         = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
+#embassy-usb          = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
+#embassy-usb-driver   = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
+#embassy-usb-logger   = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
