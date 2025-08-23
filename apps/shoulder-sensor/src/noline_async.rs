@@ -9,7 +9,7 @@ use core::cmp::min;
 use core::fmt::{Error as FmtError, Result as FmtResult, Write as FmtWrite};
 use core::usize;
 
-use crate::{cli, cli_commands, FlashMutex};
+use crate::{can_cli_commands, cli, cli_commands, FlashMutex};
 
 pub const CAP: usize = 128;
 pub const SUBS: usize = 1;
@@ -152,7 +152,7 @@ pub async fn cli_handler(
     let uptime = cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
     let angle = cli::Command::new("angle", "Read sensor angle", cli_commands::AngleCommand);
     let temp = cli::Command::new("temp", "Read sensor temperature", cli_commands::TempCommand);
-    let can = cli::Command::new("can", "Configure CAN Bus", cli::CanCommand::new(flash));
+    let can = cli::Command::new("can", "Configure CAN Bus", can_cli_commands::CanCommand::new(flash));
     let bootload = cli::Command::new("bootload", "Launch USB Bootloader", cli::BootloadCommand);
     let restart = cli::Command::new("restart", "Restart the system", cli::RestartCommand);
 

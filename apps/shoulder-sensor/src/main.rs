@@ -2,6 +2,7 @@
 #![no_main]
 
 mod can;
+mod can_cli_commands;
 mod can_consumer;
 mod can_updater;
 mod cli;
