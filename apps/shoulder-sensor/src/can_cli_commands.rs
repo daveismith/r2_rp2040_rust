@@ -4,7 +4,7 @@ use core::fmt::Write as FmtWrite;
 use embedded_io_async::Write as AsyncWrite;
 use core::ops::DerefMut;
 
-use crate::cli::CommandHandler;
+use usb_cli::CommandHandler;
 
 use sequential_storage::cache::NoCache;
 use sequential_storage::map;

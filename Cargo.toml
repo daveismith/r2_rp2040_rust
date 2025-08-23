@@ -1,6 +1,6 @@
 [workspace]
 #members = ["boot/*", "boards/*", "crates/*", "apps/*"]
-members = ["boot/*", "apps/*"]
+members = ["boot/*", "crates/*", "apps/*"]
 resolver = "2"
 
 [workspace.package]

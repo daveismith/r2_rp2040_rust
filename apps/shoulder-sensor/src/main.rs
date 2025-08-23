@@ -5,10 +5,8 @@ mod can;
 mod can_cli_commands;
 mod can_consumer;
 mod can_updater;
-mod cli;
 mod cli_commands;
 mod isotp;
-mod noline_async;
 mod tlv493d;
 mod usb;
 mod util;
@@ -42,10 +40,10 @@ use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, CriticalSectionRawMutex};
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::{Duration, Ticker};
-use noline_async::cli_handler;
 use portable_atomic::AtomicU64;
 use smart_leds::RGB8;
 use static_cell::StaticCell;
+use usb_cli;
 
 use no_std_moving_average::MovingAverage;
 
@@ -142,9 +140,26 @@ async fn colour_wheel(
 
 #[embassy_executor::task]
 async fn cli_task(flash: &'static FlashMutex) {
+    // Build the command registry
+    let version = usb_cli::Command::new("version", "Print Version Details", cli_commands::VersionCommand);
+    let echo = usb_cli::Command::new("echo", "Echo input", usb_cli::handlers::EchoCommand);
+    let bootload = usb_cli::Command::new("bootload", "Launch USB Bootloader", usb_cli::handlers::BootloadCommand);
+    let restart = usb_cli::Command::new("restart", "Restart the system", usb_cli::handlers::RestartCommand);
+    
+    //Specific 
+    let uptime = usb_cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
+    let angle = usb_cli::Command::new("angle", "Read sensor angle", cli_commands::AngleCommand);
+    let temp = usb_cli::Command::new("temp", "Read sensor temperature", cli_commands::TempCommand);
+    let can = usb_cli::Command::new("can", "Configure CAN Bus", can_cli_commands::CanCommand::new(flash));
+
+    // Create the dispatcher with the registry.
+    let commands = &[version, echo, uptime, angle, temp, can, bootload, restart, ];
+
+    let prompt = "> ";
+
     let tx = unwrap!(SHARED_TX.publisher());
     let rx = unwrap!(SHARED_RX.subscriber());
-    cli_handler(rx, tx, flash).await;
+    usb_cli::cli_handler(rx, tx, commands, prompt).await;
 }
 
 #[embassy_executor::task]

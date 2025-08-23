@@ -1704,14 +1704,12 @@ dependencies = [
  "embedded-hal-bus",
  "embedded-io-async",
  "embedded-storage-async",
- "fixed-queue",
  "format_no_std",
  "heapless",
  "libm",
  "log",
  "mcp25xx",
  "no-std-moving-average",
- "noline",
  "num_enum",
  "panic-probe",
  "portable-atomic",
@@ -1719,6 +1717,7 @@ dependencies = [
  "slice-copy",
  "smart-leds",
  "static_cell",
+ "usb-cli",
 ]
 
 [[package]]
@@ -1940,6 +1939,23 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "usb-cli"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cortex-m",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-alloc",
+ "embedded-io-async",
+ "fixed-queue",
+ "heapless",
+ "noline",
 ]
 
 [[package]]

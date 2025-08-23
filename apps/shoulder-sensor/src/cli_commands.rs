@@ -10,7 +10,7 @@ use crate::TLV_TEMP;
 use crate::UPTIME;
 use core::sync::atomic::Ordering;
 
-use crate::cli::CommandHandler;
+use usb_cli::CommandHandler;
 
 pub struct AngleCommand;
 

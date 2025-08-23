@@ -1,19 +1,13 @@
-use embassy_usb::driver::EndpointError;
-use embedded_io_async::{ErrorKind, Write as AsyncWrite};
-use fixed_queue::VecDeque;
-use noline::builder::EditorBuilder;
-
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-
 use core::cmp::min;
 use core::fmt::{Error as FmtError, Result as FmtResult, Write as FmtWrite};
 use core::usize;
 
-use crate::{can_cli_commands, cli, cli_commands, FlashMutex};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_usb::driver::EndpointError;
+use embedded_io_async::{ErrorKind, Write as AsyncWrite};
+use fixed_queue::VecDeque;
 
-pub const CAP: usize = 128;
-pub const SUBS: usize = 1;
-pub const PUBS: usize = 1;
+use crate::{CAP, PUBS, SUBS};
 
 pub struct IO<'a> {
     pub stdin: embassy_sync::pubsub::Subscriber<'a, CriticalSectionRawMutex, u8, CAP, 1, PUBS>,
@@ -22,7 +16,7 @@ pub struct IO<'a> {
 }
 
 impl<'a> IO<'a> {
-    fn new(
+    pub fn new(
         stdin: embassy_sync::pubsub::Subscriber<'a, CriticalSectionRawMutex, u8, CAP, 1, PUBS>,
         stdout: embassy_sync::pubsub::Publisher<'a, CriticalSectionRawMutex, u8, CAP, SUBS, 1>,
     ) -> Self {
@@ -58,14 +52,6 @@ impl<'a> embedded_io_async::Read for IO<'a> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         // If the queue is empty
         while self.queue.is_empty() {
-            //let mut buf: [u8; 64] = [0; 64];
-            // Read a maximum of 64 bytes from the ouput
-            //let len = self.stdin.read_packet(&mut buf).await?;
-            // This is safe because we only ever pull data when empty
-            // And the queue has the same capacity as the input buffer
-            //for i in buf.iter().take(len) {
-            //self.queue.push_back(*i).expect("Buffer overflow");
-            //}
             let val = self.stdin.next_message_pure().await;
             self.queue.push_back(val).expect("Buffer Overflow");
         }
@@ -122,55 +108,6 @@ impl<'a> FmtWrite for IO<'a> {
             Err(FmtError)
         } else {
             Ok(())
-        }
-    }
-}
-
-const MAX_LINE_SIZE: usize = 64;
-
-pub async fn cli_handler(
-    subscriber: embassy_sync::pubsub::Subscriber<
-        'static,
-        CriticalSectionRawMutex,
-        u8,
-        CAP,
-        1,
-        PUBS,
-    >,
-    publisher: embassy_sync::pubsub::Publisher<'static, CriticalSectionRawMutex, u8, CAP, SUBS, 1>,
-    flash:  &'static FlashMutex
-) {
-    let prompt = "> ";
-
-    let mut io = IO::new(subscriber, publisher);
-    let mut buffer = [0; MAX_LINE_SIZE];
-    let mut history = [0; MAX_LINE_SIZE];
-
-    // Build the command registry
-    let version = cli::Command::new("version", "Print Version Details", cli_commands::VersionCommand);
-    let echo = cli::Command::new("echo", "Echo input", cli::EchoCommand);
-    let uptime = cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
-    let angle = cli::Command::new("angle", "Read sensor angle", cli_commands::AngleCommand);
-    let temp = cli::Command::new("temp", "Read sensor temperature", cli_commands::TempCommand);
-    let can = cli::Command::new("can", "Configure CAN Bus", can_cli_commands::CanCommand::new(flash));
-    let bootload = cli::Command::new("bootload", "Launch USB Bootloader", cli::BootloadCommand);
-    let restart = cli::Command::new("restart", "Restart the system", cli::RestartCommand);
-
-    // Create the dispatcher with the registry.
-    let commands: &[cli::Command<IO>] = &[version, echo, uptime, angle, temp, can, bootload, restart, ];
-
-    let dispatcher = cli::CommandDispatcher::new(commands);
-
-    loop {
-        let mut editor = EditorBuilder::from_slice(&mut buffer)
-            .with_slice_history(&mut history)
-            .build_async(&mut io)
-            .await
-            .unwrap();
-
-        while let Ok(line) = editor.readline(prompt, &mut io).await {
-            //writeln!(io, "my read: '{}'", line).ok();
-            dispatcher.dispatch(&line, &mut io).await;
         }
     }
 }

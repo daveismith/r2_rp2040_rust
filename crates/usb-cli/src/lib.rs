@@ -1,11 +1,22 @@
+#![no_std]
+pub mod handlers;
+pub mod io;
+
+extern crate alloc;
 use alloc::boxed::Box;
 use async_trait::async_trait;
 use core::fmt::Write as FmtWrite;
 use embedded_io_async::Write as AsyncWrite;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::Timer;
 use heapless::Vec;
+use noline::builder::EditorBuilder;
 
-const MAX_ARGS: usize = 8;
+pub const CAP: usize = 128;
+pub const SUBS: usize = 1;
+pub const PUBS: usize = 1;
+pub const MAX_ARGS: usize = 8;
+const MAX_LINE_SIZE: usize = 64;
 
 // --- Trait for Command Handlers ---
 
@@ -84,53 +95,29 @@ where
     }
 }
 
-// --- Example Commands ---
+// CLI Handler
+pub async fn cli_handler(
+    subscriber: embassy_sync::pubsub::Subscriber<'static, CriticalSectionRawMutex, u8, CAP, 1, PUBS>,
+    publisher: embassy_sync::pubsub::Publisher<'static, CriticalSectionRawMutex, u8, CAP, SUBS, 1>,
+    commands: &[Command<io::IO<'_>>],
+    prompt: &'static str
+) {
+    let mut io = io::IO::new(subscriber, publisher);
+    let mut buffer = [0; MAX_LINE_SIZE];
+    let mut history = [0; MAX_LINE_SIZE];
 
-pub struct EchoCommand;
+    let dispatcher = CommandDispatcher::new(commands);
 
-#[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for EchoCommand
-where
-    IO: AsyncWrite + FmtWrite,
-{
-    async fn execute(&self, args: &[&str], io: &mut IO) {
-        if args.len() < 2 {
-            writeln!(io, "Usage: echo <message>").ok();
-            return;
+    loop {
+        let mut editor = EditorBuilder::from_slice(&mut buffer)
+            .with_slice_history(&mut history)
+            .build_async(&mut io)
+            .await
+            .unwrap();
+
+        while let Ok(line) = editor.readline(prompt, &mut io).await {
+            //writeln!(io, "my read: '{}'", line).ok();
+            dispatcher.dispatch(&line, &mut io).await;
         }
-
-        let mut msg: heapless::String<64> = heapless::String::new();
-        for (i, word) in args[1..].iter().enumerate() {
-            if i > 0 {
-                msg.push(' ').unwrap();
-            }
-            msg.push_str(word).unwrap();
-        }
-
-        writeln!(io, "content: {}", msg).ok();
-    }
-}
-
-pub struct BootloadCommand;
-
-#[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for BootloadCommand
-where 
-    IO: AsyncWrite + FmtWrite + Send
-{
-    async fn execute(&self, _args: &[&str], _io: &mut IO) {
-        embassy_rp::rom_data::reset_to_usb_boot(0, 0);
-    }
-}
-
-pub struct RestartCommand;
-
-#[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for RestartCommand
-where 
-    IO: AsyncWrite + FmtWrite + Send
-{
-    async fn execute(&self, _args: &[&str], _io: &mut IO) {
-        cortex_m::peripheral::SCB::sys_reset();
     }
 }
