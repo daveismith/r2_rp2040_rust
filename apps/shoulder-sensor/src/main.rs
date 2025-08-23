@@ -5,6 +5,7 @@ mod can;
 mod can_consumer;
 mod can_updater;
 mod cli;
+mod cli_commands;
 mod isotp;
 mod noline_async;
 mod tlv493d;

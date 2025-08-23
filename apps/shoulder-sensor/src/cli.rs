@@ -10,13 +10,8 @@ use sequential_storage::cache::NoCache;
 use sequential_storage::map;
 
 use crate::util::ParseSettingsError;
-use crate::{built_info, util, UPTIME};
+use crate::util;
 use crate::{FlashMutex, FLASH_RANGE};
-
-// Get The External Atomic Angle
-use crate::TLV_ANGLE;
-use crate::TLV_TEMP;
-use core::sync::atomic::Ordering;
 
 use crate::can::{ConfigurationEvent, CONFIGURATION_CHANNEL, ConfigurationEventPublisherType};
 
@@ -101,30 +96,6 @@ where
 
 // --- Example Commands ---
 
-pub struct VersionCommand;
-
-#[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for VersionCommand
-where
-    IO: AsyncWrite + FmtWrite,
-{
-    async fn execute(&self, _args: &[&str], io: &mut IO) {
-        let git_status = match built_info::GIT_DIRTY.unwrap() {
-            true => "dirty",
-            false => "clean",
-        };
-        writeln!(
-            io,
-            "{} {} git: {},{}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION"),
-            built_info::GIT_COMMIT_HASH_SHORT.unwrap(),
-            git_status
-        )
-        .ok();
-    }
-}
-
 pub struct EchoCommand;
 
 #[async_trait(?Send)]
@@ -148,55 +119,6 @@ where
 
         writeln!(io, "content: {}", msg).ok();
     }
-}
-
-pub struct AngleCommand;
-
-#[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for AngleCommand
-where 
-    IO: AsyncWrite + FmtWrite + Send,
-{
-
-    async fn execute(&self, _args: &[&str], io: &mut IO) {
-        //let shared_var = TLV_ANGLE.load(Ordering::Relaxed);
-        //let data_bytes = shared_var.to_be_bytes();
-
-        let val = TLV_ANGLE.load(Ordering::Relaxed);
-
-        let angle = val as f64 / 100.0;
-        writeln!(io, "Sensor Angle: {}", angle).ok();
-    }
-
-}
-
-pub struct TempCommand;
-
-#[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for TempCommand
-where 
-    IO: AsyncWrite + FmtWrite + Send,
-{
-    async fn execute(&self, _args: &[&str], io: &mut IO) {
-        let val = TLV_TEMP.load(Ordering::Relaxed);
-        let temp = val as f64 / 100.0;
-        writeln!(io, "Sensor Temperature: {}", temp).ok();
-    }   
-}
-
-pub struct UptimeCommand;
-
-#[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for UptimeCommand
-where 
-    IO: AsyncWrite + FmtWrite + Send,
-{
-
-    async fn execute(&self, _args: &[&str], io: &mut IO) {
-        let time = UPTIME.load(Ordering::Acquire);
-        writeln!(io, "Uptime: {} seconds", time).ok();
-    }
-
 }
 
 pub struct CanCommand {
@@ -309,5 +231,17 @@ where
 {
     async fn execute(&self, _args: &[&str], _io: &mut IO) {
         embassy_rp::rom_data::reset_to_usb_boot(0, 0);
+    }
+}
+
+pub struct RestartCommand;
+
+#[async_trait(?Send)]
+impl<IO> CommandHandler<IO> for RestartCommand
+where 
+    IO: AsyncWrite + FmtWrite + Send
+{
+    async fn execute(&self, _args: &[&str], _io: &mut IO) {
+        cortex_m::peripheral::SCB::sys_reset();
     }
 }

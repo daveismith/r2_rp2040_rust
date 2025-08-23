@@ -9,7 +9,7 @@ use core::cmp::min;
 use core::fmt::{Error as FmtError, Result as FmtResult, Write as FmtWrite};
 use core::usize;
 
-use crate::{cli, FlashMutex};
+use crate::{cli, cli_commands, FlashMutex};
 
 pub const CAP: usize = 128;
 pub const SUBS: usize = 1;
@@ -147,16 +147,17 @@ pub async fn cli_handler(
     let mut history = [0; MAX_LINE_SIZE];
 
     // Build the command registry
-    let version = cli::Command::new("version", "Print Version Details", cli::VersionCommand);
+    let version = cli::Command::new("version", "Print Version Details", cli_commands::VersionCommand);
     let echo = cli::Command::new("echo", "Echo input", cli::EchoCommand);
-    let uptime = cli::Command::new("uptime", "Check uptime of the device", cli::UptimeCommand);
-    let angle = cli::Command::new("angle", "Read sensor angle", cli::AngleCommand);
-    let temp = cli::Command::new("temp", "Read sensor temperature", cli::TempCommand);
+    let uptime = cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
+    let angle = cli::Command::new("angle", "Read sensor angle", cli_commands::AngleCommand);
+    let temp = cli::Command::new("temp", "Read sensor temperature", cli_commands::TempCommand);
     let can = cli::Command::new("can", "Configure CAN Bus", cli::CanCommand::new(flash));
     let bootload = cli::Command::new("bootload", "Launch USB Bootloader", cli::BootloadCommand);
+    let restart = cli::Command::new("restart", "Restart the system", cli::RestartCommand);
 
     // Create the dispatcher with the registry.
-    let commands: &[cli::Command<IO>] = &[version, echo, uptime, angle, temp, can, bootload, ];
+    let commands: &[cli::Command<IO>] = &[version, echo, uptime, angle, temp, can, bootload, restart, ];
 
     let dispatcher = cli::CommandDispatcher::new(commands);
 
