@@ -14,7 +14,7 @@ use embassy_usb::{
     class::cdc_acm::{CdcAcmClass, State}
 };
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use core::cmp::min;
+use embedded_io_async::Write;
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
@@ -25,9 +25,14 @@ const BUF_SIZE_CONTROL: usize = 64;
 const MAX_PACKET_SIZE: usize = 64;
 
 #[embassy_executor::task]
+//pub async fn usb_handler(usb: Peri<'static, USB>,
+//                         rx_publisher: embassy_sync::pubsub::Publisher<'static, CriticalSectionRawMutex, u8, 128, 1, 1>,
+//                         mut tx_subscriber: embassy_sync::pubsub::Subscriber<'static, CriticalSectionRawMutex, u8, 128, 1, 1>) {
+
 pub async fn usb_handler(usb: Peri<'static, USB>,
-                         rx_publisher: embassy_sync::pubsub::Publisher<'static, CriticalSectionRawMutex, u8, 128, 1, 1>,
-                         mut tx_subscriber: embassy_sync::pubsub::Subscriber<'static, CriticalSectionRawMutex, u8, 128, 1, 1>) {
+                         mut rx_pipe: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, 128>,
+                         tx_pipe: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, 128>)
+{
     // Create the driver, from the HAL.
     let driver = embassy_rp::usb::Driver::new(usb, Irqs);
 
@@ -39,7 +44,7 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
         config.serial_number = Some("TEST");
         config.max_power = 100;
         config.max_packet_size_0 = 64;
-        // TODO: Update The Serial Number From JDEC
+        // TODO: Update The Serial Number From JDEC or something similar
 
         // Required for windows compatibility.
         // https://developer.nordicsemi.com/nRF_Connect_SDK/doc/1.9.1/kconfig/CONFIG_CDC_ACM_IAD.html#help
@@ -87,9 +92,7 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
         loop {
             let mut buf: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
             let len = recv.read_packet(&mut buf).await.unwrap();
-            for x in buf[0 .. len].iter() {
-                rx_publisher.publish(*x).await;
-            }
+            let _ = rx_pipe.write_all(&buf[0..len]).await;
         }
     };
 
@@ -99,15 +102,7 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
         send.wait_connection().await;
         loop {
             let mut buf: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
-            let mut len = 1;
-            buf[0] = tx_subscriber.next_message_pure().await;
-
-            let num = min(MAX_PACKET_SIZE - 1, tx_subscriber.available() as usize);
-            for i in 0..num {
-                buf[(1 + i) as usize] = tx_subscriber.next_message_pure().await;
-                len += 1;
-            }
-
+            let len = tx_pipe.read(&mut buf).await;
             send.write_packet(&mut buf[0..len]).await.unwrap();
         }
     };

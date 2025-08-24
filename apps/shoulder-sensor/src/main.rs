@@ -15,6 +15,7 @@ use core::ops::Range;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicI16, Ordering};
 
+use embassy_sync::pipe::Pipe;
 // Linked-List First Fit Heap allocator (feature = "llff")
 use embedded_alloc::LlffHeap as Heap;
 
@@ -31,7 +32,6 @@ use embassy_rp::spi::{self, Instance, Spi};
 use embassy_rp::{bind_interrupts, Peri};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, CriticalSectionRawMutex};
-use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::{Duration, Ticker};
 use embedded_can::blocking::Can;
 use portable_atomic::AtomicU64;
@@ -76,9 +76,6 @@ bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<peripherals::PIO0>;
     I2C1_IRQ => I2cInterruptHandler<peripherals::I2C1>;
 });
-
-static SHARED_RX: PubSubChannel<CriticalSectionRawMutex, u8, 128, 1, 1> = PubSubChannel::new();
-static SHARED_TX: PubSubChannel<CriticalSectionRawMutex, u8, 128, 1, 1> = PubSubChannel::new();
 
 /// Input a value 0 to 255 to get a color value
 /// The colours are a transition r - g - b - back to r.
@@ -134,7 +131,10 @@ async fn colour_wheel(
 }
 
 #[embassy_executor::task]
-async fn cli_task(flash: &'static FlashMutex) {
+async fn cli_task(flash: &'static FlashMutex,
+    tx: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, 128>,
+    rx: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, 128>
+) {
     // Build the command registry
     let version = usb_cli::Command::new("version", "Print Version Details", cli_commands::VersionCommand);
     let echo = usb_cli::Command::new("echo", "Echo input", usb_cli::handlers::EchoCommand);
@@ -152,9 +152,7 @@ async fn cli_task(flash: &'static FlashMutex) {
 
     let prompt = "> ";
 
-    let tx = unwrap!(SHARED_TX.publisher());
-    let rx = unwrap!(SHARED_RX.subscriber());
-    usb_cli::cli_handler(rx, tx, commands, prompt).await;
+    usb_cli::cli_handler(tx, rx, commands, prompt).await;
 }
 
 #[embassy_executor::task]
@@ -232,9 +230,15 @@ async fn my_main(spawner: Spawner) {
     let flash = FLASH.init(Mutex::new(flash));
 
     // Set Up The USB Handler
-    let usb_rx = unwrap!(SHARED_RX.publisher());
-    let usb_tx = unwrap!(SHARED_TX.subscriber());
-    unwrap!(spawner.spawn(usb_handler(p.USB, usb_rx, usb_tx)));
+    static SHARED_RX_PIPE: StaticCell<usb_cli::UsbPipe> = StaticCell::new();
+    static SHARED_TX_PIPE: StaticCell<usb_cli::UsbPipe> = StaticCell::new();
+
+    let rx_pipe = SHARED_RX_PIPE.init(Pipe::new());
+    let tx_pipe = SHARED_TX_PIPE.init(Pipe::new());
+
+    let (usb_rx_reader, usb_rx_writer) = rx_pipe.split();
+    let (usb_tx_reader, usb_tx_writer) = tx_pipe.split();
+    unwrap!(spawner.spawn(usb_handler(p.USB, usb_rx_writer, usb_tx_reader)));
 
     // Set Up Colour Wheel Indicator
     // adafruit rp2040 CAN BUST Feather
@@ -267,7 +271,7 @@ async fn my_main(spawner: Spawner) {
     unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, FLASH_RANGE, tx_report)));
 
     // Set Up The CLI Task
-    unwrap!(spawner.spawn(cli_task(flash)));
+    unwrap!(spawner.spawn(cli_task(flash, usb_tx_writer, usb_rx_reader)));
 
     // Set Up The Can Updater Task
     unwrap!(spawner.spawn(can_updater_task(flash)));

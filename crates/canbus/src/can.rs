@@ -170,7 +170,7 @@ pub async fn can_handler(
     let mut handler = MyHandler::new(CONFIGURATION_CHANNEL.publisher().unwrap());
     let mut firmware_updater = CanFirmwareUpdater::new(can_bus, node_id, 2);
 
-    let mut dispatcher: CanSimpleDispatcher<4, _> = CanSimpleDispatcher::new(node_id);
+    let mut dispatcher: CanSimpleDispatcher<'_, 4, mcp25xx::CanFrame>= CanSimpleDispatcher::new(node_id);
     dispatcher.register(&mut handler).unwrap();
     dispatcher.register(&mut firmware_updater).unwrap();
 

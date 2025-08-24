@@ -8,15 +8,16 @@ use async_trait::async_trait;
 use core::fmt::Write as FmtWrite;
 use embedded_io_async::Write as AsyncWrite;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pipe::Pipe;
 use embassy_time::Timer;
 use heapless::Vec;
 use noline::builder::EditorBuilder;
 
 pub const CAP: usize = 128;
-pub const SUBS: usize = 1;
-pub const PUBS: usize = 1;
 pub const MAX_ARGS: usize = 8;
 const MAX_LINE_SIZE: usize = 64;
+
+pub type UsbPipe = Pipe<CriticalSectionRawMutex, CAP>;
 
 // --- Trait for Command Handlers ---
 
@@ -96,13 +97,13 @@ where
 }
 
 // CLI Handler
-pub async fn cli_handler(
-    subscriber: embassy_sync::pubsub::Subscriber<'static, CriticalSectionRawMutex, u8, CAP, 1, PUBS>,
-    publisher: embassy_sync::pubsub::Publisher<'static, CriticalSectionRawMutex, u8, CAP, SUBS, 1>,
-    commands: &[Command<io::IO<'_>>],
-    prompt: &'static str
+pub async fn cli_handler<'a>(
+    tx: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, 128>,
+    rx: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, 128>,
+    commands: &[Command<io::IO<'a>>],
+    prompt: &'a str
 ) {
-    let mut io = io::IO::new(subscriber, publisher);
+    let mut io = io::IO::new(rx, tx);
     let mut buffer = [0; MAX_LINE_SIZE];
     let mut history = [0; MAX_LINE_SIZE];
 
