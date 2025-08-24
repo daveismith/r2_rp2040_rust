@@ -3,7 +3,6 @@
 
 mod cli_commands;
 mod tlv493d;
-mod usb;
 
 // Use of a mod or pub mod is not actually necessary.
 pub mod built_info {
@@ -46,7 +45,7 @@ use embedded_can::{ExtendedId, Frame};
 use no_std_moving_average::MovingAverage;
 
 use canbus::can::can_handler;
-use usb::usb_handler;
+use usb_serial::usb_handler;
 
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -233,12 +232,13 @@ async fn my_main(spawner: Spawner) {
     static SHARED_RX_PIPE: StaticCell<usb_cli::UsbPipe> = StaticCell::new();
     static SHARED_TX_PIPE: StaticCell<usb_cli::UsbPipe> = StaticCell::new();
 
+
     let rx_pipe = SHARED_RX_PIPE.init(Pipe::new());
     let tx_pipe = SHARED_TX_PIPE.init(Pipe::new());
 
     let (usb_rx_reader, usb_rx_writer) = rx_pipe.split();
     let (usb_tx_reader, usb_tx_writer) = tx_pipe.split();
-    unwrap!(spawner.spawn(usb_handler(p.USB, usb_rx_writer, usb_tx_reader)));
+    unwrap!(spawner.spawn(usb_handler(p.USB, "test", usb_rx_writer, usb_tx_reader)));
 
     // Set Up Colour Wheel Indicator
     // adafruit rp2040 CAN BUST Feather

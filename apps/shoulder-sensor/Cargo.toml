@@ -50,6 +50,7 @@ static_cell = "2.1.1"
 
 canbus = { path = "../../crates/canbus", features = ["usb-cli"] }
 usb-cli = { path = "../../crates/usb-cli" }
+usb-serial = { path = "../../crates/usb-serial" }
 
 embedded-io-async = "0.6.1"
 async-trait = "0.1"
@@ -73,4 +74,3 @@ no-std-moving-average = "0.3.0"
 
 #slice-copy = "0.3.0"
 #num_enum = { version = "0.7.4", default-features = false, features = [] }
-

@@ -1743,6 +1743,7 @@ dependencies = [
  "smart-leds",
  "static_cell",
  "usb-cli",
+ "usb-serial",
 ]
 
 [[package]]
@@ -1991,6 +1992,20 @@ checksum = "98816b1accafbb09085168b90f27e93d790b4bfa19d883466b5e53315b5f06a6"
 dependencies = [
  "heapless",
  "portable-atomic",
+]
+
+[[package]]
+name = "usb-serial"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-usb",
+ "embassy-usb-logger",
+ "embedded-io-async",
+ "log",
 ]
 
 [[package]]

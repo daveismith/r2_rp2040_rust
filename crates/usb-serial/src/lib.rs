@@ -1,3 +1,5 @@
+#![no_std]
+
 // USB interface configuration & setup. This will create two endpoints. One is
 // an application endpoint which contains the USB serial which we use for 
 // application communications and the second is the log output endpoint.
@@ -25,11 +27,8 @@ const BUF_SIZE_CONTROL: usize = 64;
 const MAX_PACKET_SIZE: usize = 64;
 
 #[embassy_executor::task]
-//pub async fn usb_handler(usb: Peri<'static, USB>,
-//                         rx_publisher: embassy_sync::pubsub::Publisher<'static, CriticalSectionRawMutex, u8, 128, 1, 1>,
-//                         mut tx_subscriber: embassy_sync::pubsub::Subscriber<'static, CriticalSectionRawMutex, u8, 128, 1, 1>) {
-
 pub async fn usb_handler(usb: Peri<'static, USB>,
+                         serial: &'static str,
                          mut rx_pipe: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, 128>,
                          tx_pipe: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, 128>)
 {
@@ -38,10 +37,10 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
 
     // Create embassy-usb Config
     let config = {
-        let mut config = Config::new(0xc0de, 0xcafe);
+        let mut config = Config::new(0x1781, 0x0e6c);
         config.manufacturer = Some("Embassy");
         config.product = Some("USB-serial example");
-        config.serial_number = Some("TEST");
+        config.serial_number = Some(serial);
         config.max_power = 100;
         config.max_packet_size_0 = 64;
         // TODO: Update The Serial Number From JDEC or something similar
