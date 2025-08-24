@@ -5,6 +5,9 @@ edition = "2021"
 authors = ["David Smith <1734595+daveismith@users.noreply.github.com>"]
 license = "MIT or Apache-2.0"
 
+[features]
+usb-cli = ["dep:usb-cli"]
+
 [dependencies]
 async-trait = "0.1"
 cortex-m = { version = "0.7.7", features = ["inline-asm"] }
@@ -31,4 +34,4 @@ sequential-storage = "5.0.0"
 slice-copy = "0.3.0"
 static_cell = "2.1.1"
 
-usb-cli = { path = "../../crates/usb-cli" }
+usb-cli = { path = "../../crates/usb-cli", optional = true }

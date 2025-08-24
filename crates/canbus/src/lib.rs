@@ -1,5 +1,8 @@
 #![no_std]
+
+#[cfg(feature = "usb-cli")]
 pub mod can_cli_commands;
+
 pub mod can_consumer;
 pub mod can_updater;
 pub mod can;
