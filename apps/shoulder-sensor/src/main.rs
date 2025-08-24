@@ -1,15 +1,9 @@
 #![no_std]
 #![no_main]
 
-mod can;
-mod can_cli_commands;
-mod can_consumer;
-mod can_updater;
 mod cli_commands;
-mod isotp;
 mod tlv493d;
 mod usb;
-mod util;
 
 // Use of a mod or pub mod is not actually necessary.
 pub mod built_info {
@@ -24,7 +18,6 @@ use core::sync::atomic::{AtomicI16, Ordering};
 // Linked-List First Fit Heap allocator (feature = "llff")
 use embedded_alloc::LlffHeap as Heap;
 
-use can_updater::can_updater_task;
 use defmt::unwrap;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::{Executor, Spawner};
@@ -34,20 +27,25 @@ use embassy_rp::i2c::{self, I2c, InterruptHandler as I2cInterruptHandler};
 use embassy_rp::peripherals;
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
-use embassy_rp::spi::{self, Spi};
+use embassy_rp::spi::{self, Instance, Spi};
 use embassy_rp::{bind_interrupts, Peri};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, CriticalSectionRawMutex};
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::{Duration, Ticker};
+use embedded_can::blocking::Can;
 use portable_atomic::AtomicU64;
 use smart_leds::RGB8;
 use static_cell::StaticCell;
 use usb_cli;
+use canbus::{SpiBusMutex, SpiBusType};
+use canbus::can_updater::can_updater_task;
+
+use embedded_can::{ExtendedId, Frame};
 
 use no_std_moving_average::MovingAverage;
 
-use can::can_handler;
+use canbus::can::can_handler;
 use usb::usb_handler;
 
 use core::cell::RefCell;
@@ -73,9 +71,6 @@ const FLASH_RANGE: Range<u32> = 0x480000..0x500000;
 type FlashType = embassy_rp::flash::Flash<'static, peripherals::FLASH, flash::Async, FLASH_SIZE>;
 type FlashMutex = Mutex<CriticalSectionRawMutex, FlashType>;
 type I2c1Bus = Mutex<NoopRawMutex, I2c<'static, peripherals::I2C1, i2c::Async>>;
-
-type SpiBusType<'a> = Spi<'a, peripherals::SPI1, spi::Blocking>;
-type SpiBusMutex<'a> = BlockingMutex<CriticalSectionRawMutex, RefCell<SpiBusType<'a>>>;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<peripherals::PIO0>;
@@ -150,7 +145,7 @@ async fn cli_task(flash: &'static FlashMutex) {
     let uptime = usb_cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
     let angle = usb_cli::Command::new("angle", "Read sensor angle", cli_commands::AngleCommand);
     let temp = usb_cli::Command::new("temp", "Read sensor temperature", cli_commands::TempCommand);
-    let can = usb_cli::Command::new("can", "Configure CAN Bus", can_cli_commands::CanCommand::new(flash));
+    let can = usb_cli::Command::new("can", "Configure CAN Bus", canbus::can_cli_commands::CanCommand::new(flash, &FLASH_RANGE));
 
     // Create the dispatcher with the registry.
     let commands = &[version, echo, uptime, angle, temp, can, bootload, restart, ];
@@ -180,6 +175,45 @@ async fn tlv493d_task(i2c_bus: &'static I2c1Bus) {
         TLV_ANGLE.store(result_angle, Ordering::Relaxed);
         TLV_TEMP.store(result_temp, Ordering::Relaxed);
         ticker.next().await;
+    }
+}
+
+fn tx_report<T: Instance>(mcp25xx: &mut canbus::can::CanTransciever<T>, node_id: u32, sequence: &mut u8) {
+    // We fired because of the ticker, so we are going to send a data report.
+    // Currently this consists of a sequence number, the sensor angle and the 
+    // sensor temperature. Both angle & temperature are stored in a shared 
+    // AtomicI16. We'll read this value and convert it to the data which we
+    // then send over the line (in big endian format right now)
+
+    let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
+    let temp_var = TLV_TEMP.load(Ordering::Relaxed);
+    let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
+    data_bytes.insert(0, *sequence);    // prepend the sequence to the start.
+
+    *sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
+
+    // For now, we use a hard coded id of 123, but will soon change this to be
+    // something that is either read from hardware or NVS. Then we create the
+    // frame which will be sent over the wire.
+    let can_id = ExtendedId::new((node_id << 5) as u32).unwrap();
+
+    let frame = Frame::new(
+        //Id::Extended(ExtendedId::ZERO),
+        can_id,
+        &data_bytes,
+    );
+
+    // If we successfully created the frame, add it to the transmit queue of the
+    // CAN transceiver.
+    match frame {
+        None => {},
+        Some(ref f) => match mcp25xx.transmit(f) {
+            Ok(_) => { },
+            //Err(_) => {},
+            Err(error) => {
+                log::info!("Transmit Error: {:?}", error);
+            }
+        }
     }
 }
 
@@ -224,13 +258,13 @@ async fn my_main(spawner: Spawner) {
 
     // Setup SPI bus
     let spi = Spi::new_blocking(p.SPI1, p.PIN_14, p.PIN_15, p.PIN_8, config);
-    let spi_bus: BlockingMutex<CriticalSectionRawMutex, RefCell<SpiBusType<'_>>>  = BlockingMutex::new(RefCell::new(spi));
-    static MY_SPI_BUS: StaticCell<SpiBusMutex> = StaticCell::new();
+    let spi_bus: BlockingMutex<CriticalSectionRawMutex, RefCell<SpiBusType<'_, peripherals::SPI1>>>  = BlockingMutex::new(RefCell::new(spi));
+    static MY_SPI_BUS: StaticCell<SpiBusMutex<peripherals::SPI1>> = StaticCell::new();
     let spi_bus = MY_SPI_BUS.init(spi_bus);
     let can_cs = Output::new(p.PIN_19, Level::High);
     let can_reset = Output::new(p.PIN_18, Level::Low);
     let can_int = Input::new(p.PIN_22, Pull::None);
-    unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash)));
+    unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, FLASH_RANGE, tx_report)));
 
     // Set Up The CLI Task
     unwrap!(spawner.spawn(cli_task(flash)));

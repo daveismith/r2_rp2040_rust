@@ -155,6 +155,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
+name = "canbus"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "cortex-m",
+ "cortex-m-rt",
+ "embassy-boot-rp",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-can",
+ "embedded-hal-async",
+ "embedded-hal-bus",
+ "embedded-io-async",
+ "heapless",
+ "log",
+ "mcp25xx",
+ "num_enum",
+ "sequential-storage",
+ "slice-copy",
+ "static_cell",
+ "usb-cli",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1685,6 +1713,7 @@ dependencies = [
  "async-trait",
  "bitflags 2.9.3",
  "built",
+ "canbus",
  "cortex-m",
  "cortex-m-rt",
  "defmt 1.0.1",
@@ -1701,20 +1730,16 @@ dependencies = [
  "embedded-alloc",
  "embedded-can",
  "embedded-hal-async",
- "embedded-hal-bus",
  "embedded-io-async",
  "embedded-storage-async",
  "format_no_std",
  "heapless",
  "libm",
  "log",
- "mcp25xx",
  "no-std-moving-average",
- "num_enum",
  "panic-probe",
  "portable-atomic",
  "sequential-storage",
- "slice-copy",
  "smart-leds",
  "static_cell",
  "usb-cli",

@@ -1,7 +1,7 @@
 use crate::can::NEEDS_TICK_SIGNAL;
 use crate::can_consumer::CanFrameConsumer;
 use crate::isotp::{IsoTpMessage, IsoTpNode, MAX_PAYLOAD_SIZE};
-use crate::{built_info, FlashMutex, FlashType};
+use crate::{FlashMutex, FlashType};
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -11,7 +11,6 @@ use embassy_boot_rp::{AlignedBuffer, FirmwareUpdater, FirmwareUpdaterConfig, Sta
 use embassy_embedded_hal::flash::partition::Partition;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::channel::{Channel, Receiver};
-
 use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
 use embedded_can::ExtendedId;
@@ -242,11 +241,12 @@ async fn process_attribute_get(payload: &[u8], state: &CanFirmwareUpdaterState) 
 
     match attribute {
         Some(CanUpdaterAttribute::ActiveFileVersion) => {
-            v.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes())
-                .unwrap();
-            v.extend_from_slice("-".as_bytes()).unwrap();
-            v.extend_from_slice(built_info::GIT_COMMIT_HASH_SHORT.unwrap().as_bytes())
-                .unwrap();
+            
+            //v.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes())
+            //    .unwrap();
+            //v.extend_from_slice("-".as_bytes()).unwrap();
+            //v.extend_from_slice(built_info::GIT_COMMIT_HASH_SHORT.unwrap().as_bytes())
+            //    .unwrap();
         }
         Some(CanUpdaterAttribute::FileOffset) => v.extend(state.file_offset.to_be_bytes()),
         Some(CanUpdaterAttribute::FileSize) => v.extend(state.file_size.to_be_bytes()),

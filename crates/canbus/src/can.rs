@@ -1,21 +1,24 @@
-use core::ops::DerefMut;
+use core::ops::{DerefMut, Range};
 
+//use cortex_m::peripheral;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_rp::gpio::{Input, Output};
+use embassy_rp::peripherals;
+use embassy_rp::spi::Instance;
 use embassy_sync::blocking_mutex::raw::{RawMutex, CriticalSectionRawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_sync::pubsub::{PubSubChannel, Publisher};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker, Timer};
 use embedded_can::nb::Can;
-use embedded_can::{ExtendedId, Frame};
+use embedded_can::ExtendedId;
 use async_trait::async_trait;
 extern crate alloc;
 use alloc::boxed::Box;
 
 use mcp25xx::bitrates::clock_16mhz::CNF_1000K_BPS;
 use mcp25xx::registers::{OperationMode, CANINTE, RXB0CTRL, RXB1CTRL, RXM};
-use mcp25xx::{AcceptanceFilter, CanFrame, Config, IdHeader, MCP25xx};
+use mcp25xx::{AcceptanceFilter, Config, IdHeader, MCP25xx};
 
 use embassy_futures::select::{select3, select4, Either3, Either4};
 
@@ -25,14 +28,13 @@ use static_cell::StaticCell;
 use crate::util::Settings;
 use crate::can_updater::CanFirmwareUpdater;
 
-use crate::{SpiBusType, FLASH_RANGE, TLV_ANGLE, TLV_TEMP};
+use crate::{SpiBusType, TxReportHandler};
 use crate::{FlashMutex, SpiBusMutex};
-use core::sync::atomic::Ordering;
 
 use crate::can_consumer::{CanSimpleDispatcher, CanFrameConsumer};
 
-type CanTransciever<'a> = MCP25xx<SpiDevice<'static, CriticalSectionRawMutex, SpiBusType<'a>, Output<'static>>>;
-type CanTranscieverMutex<'a> = Mutex<CriticalSectionRawMutex, CanTransciever<'a>>;
+pub type CanTransciever<'a, T> = MCP25xx<SpiDevice<'static, CriticalSectionRawMutex, SpiBusType<'a, T>, Output<'static>>>;
+pub type CanTranscieverMutex<'a, T> = Mutex<CriticalSectionRawMutex, CanTransciever<'a, T>>;
 
 const CAP: usize = 64;
 const SUBS: usize = 1;
@@ -51,8 +53,8 @@ pub enum ConfigurationEvent {
     IntervalUpdate { hz: u64 },
 }
 
-fn configure_mcp25xx(
-    mcp25xx: &mut CanTransciever, 
+fn configure_mcp25xx<T: Instance>(
+    mcp25xx: &mut CanTransciever<T>, 
     node_id: u32
 ) {
     let filter_addr = ExtendedId::new(node_id << 5).unwrap(); 
@@ -81,45 +83,6 @@ fn configure_mcp25xx(
         .with_rx0ie(true)
         .with_rx1ie(true);
     mcp25xx.write_register(ints).unwrap();
-}
-
-fn tx_report(mcp25xx: &mut CanTransciever, node_id: u32, sequence: &mut u8) {
-    // We fired because of the ticker, so we are going to send a data report.
-    // Currently this consists of a sequence number, the sensor angle and the 
-    // sensor temperature. Both angle & temperature are stored in a shared 
-    // AtomicI16. We'll read this value and convert it to the data which we
-    // then send over the line (in big endian format right now)
-
-    let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
-    let temp_var = TLV_TEMP.load(Ordering::Relaxed);
-    let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
-    data_bytes.insert(0, *sequence);    // prepend the sequence to the start.
-
-    *sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
-
-    // For now, we use a hard coded id of 123, but will soon change this to be
-    // something that is either read from hardware or NVS. Then we create the
-    // frame which will be sent over the wire.
-    let can_id = ExtendedId::new((node_id << 5) as u32).unwrap();
-
-    let frame = CanFrame::new(
-        //Id::Extended(ExtendedId::ZERO),
-        can_id,
-        &data_bytes,
-    );
-
-    // If we successfully created the frame, add it to the transmit queue of the
-    // CAN transceiver.
-    match frame {
-        None => {},
-        Some(ref f) => match mcp25xx.transmit(f) {
-            Ok(_) => {},
-            //Err(_) => {},
-            Err(error) => {
-                log::info!("Tranmit Error: {:?}", error);
-            }
-        }
-    }
 }
 
 struct MyHandler<'a, M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usize> {
@@ -158,11 +121,13 @@ impl<T: embedded_can::Frame + Sync, M: RawMutex + Sync, const CAP: usize, const 
 
 #[embassy_executor::task]
 pub async fn can_handler(
-    spi_bus: &'static SpiBusMutex<'static>,
+    spi_bus: &'static SpiBusMutex<'static, peripherals::SPI1>,
     cs: Output<'static>,
     mut reset: Output<'static>,
     mut int: Input<'static>,
-    flash: &'static FlashMutex
+    flash: &'static FlashMutex,
+    flash_range: Range<u32>,
+    tx_report: TxReportHandler<'static, peripherals::SPI1>
 ) {
     Timer::after_secs(2).await;
     let mut sequence = 0 as u8;
@@ -173,7 +138,7 @@ pub async fn can_handler(
         let mut flash = flash.lock().await;
         fetch_item::<Settings, u32, _>(
             flash.deref_mut(),
-            FLASH_RANGE,
+            flash_range,
             &mut NoCache::new(),
             &mut data_buffer,
             &Settings::CanId,
@@ -189,7 +154,7 @@ pub async fn can_handler(
     // Set up the SPI bus for connecting to the device
     let spi = SpiDevice::new(&spi_bus, cs);
     let mcp25xx  = MCP25xx { spi };
-    static CAN: StaticCell<CanTranscieverMutex> = StaticCell::new();
+    static CAN: StaticCell<CanTranscieverMutex<peripherals::SPI1>> = StaticCell::new();
     let can_bus = CAN.init(Mutex::new(mcp25xx));
 
     // Perform Initial Configuration of the MCP25xx

@@ -48,6 +48,7 @@ panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 embedded-alloc = "0.6.0"
 static_cell = "2.1.1"
 
+canbus = { path = "../../crates/canbus" }
 usb-cli = { path = "../../crates/usb-cli" }
 
 embedded-io-async = "0.6.1"
@@ -57,10 +58,10 @@ log = { version = "0.4.27", features = ["max_level_info"]}
 format_no_std = "1.2.0"
 smart-leds = "0.4.0"
 
-mcp25xx = { version = "0.3.0", features = ["mcp25625"] }
+#mcp25xx = { version = "0.3.0", features = ["mcp25625"] }
 embedded-can = "0.4.1"
 embedded-hal-async = "1.0.0"
-embedded-hal-bus = "0.3.0"
+#embedded-hal-bus = "0.3.0"
 portable-atomic = { version = "1.11.1", features = ["critical-section"] }
 heapless = "0.8.0"
 embedded-storage-async = "0.4.1"
@@ -70,30 +71,6 @@ bitflags = "2.9.1"
 libm = "0.2.11"
 no-std-moving-average = "0.3.0"
 
-slice-copy = "0.3.0"
-num_enum = { version = "0.7.4", default-features = false, features = [] }
+#slice-copy = "0.3.0"
+#num_enum = { version = "0.7.4", default-features = false, features = [] }
 
-[profile.release]
-codegen-units = 1
-debug = false
-lto = true
-opt-level = 'z'
-strip = true  # Automatically strip symbols from the binary.
-
-
-[profile.dev]
-debug = 2
-lto = true
-opt-level = "z"
-
-[patch.crates-io]
-# make sure to get the latest git rev from github, you can see the latest one here:
-# https://github.com/embassy-rs/embassy/commits/main/
-#embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
-#embassy-executor     = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
-#embassy-rp           = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
-#embassy-sync         = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
-#embassy-time         = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
-#embassy-usb          = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
-#embassy-usb-driver   = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }
-#embassy-usb-logger   = { git = "https://github.com/embassy-rs/embassy",     rev = "ad2f7c329bbbefc0e3be38b36627705a5f42427b" }

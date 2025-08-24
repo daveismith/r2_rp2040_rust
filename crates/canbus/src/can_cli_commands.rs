@@ -1,32 +1,30 @@
+use crate::FlashMutex;
+use crate::can::{ConfigurationEvent, CONFIGURATION_CHANNEL, ConfigurationEventPublisherType};
+use crate::util::ParseSettingsError;
+use crate::util;
+
 use alloc::boxed::Box;
 use async_trait::async_trait;
 use core::fmt::Write as FmtWrite;
+use core::ops::{DerefMut, Range};
 use embedded_io_async::Write as AsyncWrite;
-use core::ops::DerefMut;
-
-use usb_cli::CommandHandler;
-
 use sequential_storage::cache::NoCache;
 use sequential_storage::map;
-
-use crate::util::ParseSettingsError;
-use crate::util;
-use crate::{FlashMutex, FLASH_RANGE};
-
-use crate::can::{ConfigurationEvent, CONFIGURATION_CHANNEL, ConfigurationEventPublisherType};
-
+use usb_cli::CommandHandler;
 
 pub struct CanCommand {
     pub flash: &'static FlashMutex,
+    pub flash_range: &'static Range<u32>,
     pub publisher: ConfigurationEventPublisherType<'static>,
 }
 
 //TODO: Figure Out How To Manage This
 impl<'a> CanCommand {
 
-    pub fn new(flash: &'static FlashMutex) -> Self {
+    pub fn new(flash: &'static FlashMutex, flash_range: &'static Range<u32>) -> Self {
         Self { 
             flash: flash,
+            flash_range: flash_range,
             publisher: CONFIGURATION_CHANNEL.publisher().unwrap()
         }
     }
@@ -60,7 +58,7 @@ where
             let mut flash = self.flash.lock().await;
             let val = map::fetch_item::<util::Settings, u32, _>(
                 flash.deref_mut(),
-                FLASH_RANGE,
+                self.flash_range.clone(),
                 &mut NoCache::new(),
                 &mut data_buffer,
                 &setting.unwrap(),
@@ -90,7 +88,7 @@ where
                         let setting = setting.unwrap();
                         let result = map::store_item(
                             flash.deref_mut(),
-                            FLASH_RANGE,
+                            self.flash_range.clone(),
                             &mut NoCache::new(),
                             &mut data_buffer,
                             &setting,

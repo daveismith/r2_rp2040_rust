@@ -28,6 +28,6 @@ defmt = [
     "embassy-rp/defmt",
 ]
 
-[profile.release]
-debug = true
-opt-level = 's'
+#[profile.release]
+#debug = true
+#opt-level = 's'
