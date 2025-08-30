@@ -10,10 +10,13 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-use core::ops::Range;
+use core::ops::{DerefMut, Range};
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicI16, Ordering};
 
+use canbus::handlers::MyHandler;
+use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
+//use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_sync::pipe::Pipe;
 // Linked-List First Fit Heap allocator (feature = "llff")
 use embedded_alloc::LlffHeap as Heap;
@@ -30,21 +33,24 @@ use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
 use embassy_rp::spi::{self, Instance, Spi};
 use embassy_rp::{bind_interrupts, Peri};
 use embassy_rp::watchdog::Watchdog;
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, CriticalSectionRawMutex};
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_time::{Duration, Ticker};
 use embedded_can::blocking::Can;
+use mcp25xx::{CanFrame, MCP25xx};
 use portable_atomic::AtomicU64;
+use sequential_storage::cache::NoCache;
+use sequential_storage::map::fetch_item;
 use smart_leds::RGB8;
 use static_cell::StaticCell;
 use usb_cli;
 use canbus::{SpiBusMutex, SpiBusType};
-use canbus::can_updater::can_updater_task;
+use canbus::can_updater::{can_updater_task, CanFirmwareUpdater};
 
 use embedded_can::{ExtendedId, Frame};
 
 use no_std_moving_average::MovingAverage;
 
-use canbus::can::can_handler;
+//use canbus::can::can_handler;
 use usb_serial::usb_handler;
 
 use core::cell::RefCell;
@@ -66,10 +72,13 @@ pub static UPTIME: AtomicU64 = AtomicU64::new(0);
 
 const FLASH_SIZE: usize = 8 * 1024 * 1024;
 const FLASH_RANGE: Range<u32> = 0x480000..0x500000;
+const DEFAULT_NODE_ID: u32 = 0;
 
 type FlashType = embassy_rp::flash::Flash<'static, peripherals::FLASH, flash::Async, FLASH_SIZE>;
 type FlashMutex = Mutex<CriticalSectionRawMutex, FlashType>;
 type I2c1Bus = Mutex<NoopRawMutex, I2c<'static, peripherals::I2C1, i2c::Async>>;
+
+static TX_QUEUE: embassy_sync::channel::Channel<CriticalSectionRawMutex, mcp25xx::CanFrame, 4> = embassy_sync::channel::Channel::new();
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<peripherals::PIO0>;
@@ -213,6 +222,99 @@ fn tx_report<T: Instance>(mcp25xx: &mut canbus::can::CanTransciever<T>, node_id:
         }
     }
 }
+    
+
+#[embassy_executor::task]
+pub async fn can_handler(
+    spi_bus: &'static SpiBusMutex<'static, peripherals::SPI1>,
+    cs: Output<'static>,
+    reset: Output<'static>,
+    int: Input<'static>,
+    flash: &'static FlashMutex,
+    flash_range: Range<u32>
+) {
+    // Read The Node ID
+    let mut data_buffer: [u8; 128] = [0; 128];
+    let node_id: u32 = {
+        let mut flash = flash.lock().await;
+        fetch_item::<canbus::util::Settings, u32, _>(
+            flash.deref_mut(),
+            flash_range,
+            &mut NoCache::new(),
+            &mut data_buffer,
+            &canbus::util::Settings::CanId,
+        )
+        .await.unwrap_or(Some(DEFAULT_NODE_ID)).unwrap_or(DEFAULT_NODE_ID)
+    };
+
+    //let handler: MyHandler<'_, CriticalSectionRawMutex, canbus::can::ConfigurationEvent, 64, 1, 2> = MyHandler::new(canbus::can::CONFIGURATION_CHANNEL.publisher().unwrap());
+    //static CFG_HANDLER: StaticCell<MyHandler<'_, CriticalSectionRawMutex, canbus::can::ConfigurationEvent, 64, 1, 2> > = StaticCell::new();
+    //let my_handler = CFG_HANDLER.init(handler);
+    
+    let fw_updater  = canbus::can_updater::CanFirmwareUpdater::new(TX_QUEUE.dyn_sender(), node_id, 2);
+    static FW_HANDLER: StaticCell<CanFirmwareUpdater<'_, CanFrame>> = StaticCell::new();
+    let my_fw_handler = FW_HANDLER.init(fw_updater);
+    
+    // Set up the SPI bus for connecting to the device
+    let spi = SpiDevice::new(spi_bus, cs);
+    let mcp25xx  = MCP25xx { spi };
+    let can_bus = Mutex::new(mcp25xx);
+
+    let mut can: canbus::can::CanService<'_, 4, _, mcp25xx::CanFrame> = canbus::can::CanService::new(can_bus, reset, int, 5, TX_QUEUE.dyn_receiver());
+
+    // Register The Handlers
+    //can.register(my_handler).unwrap();
+
+    can.register(my_fw_handler).unwrap();
+    
+    can.run().await
+
+}
+
+#[embassy_executor::task]
+pub async fn can_reporter() {
+    let sender: embassy_sync::channel::DynamicSender<'_, CanFrame> = TX_QUEUE.dyn_sender();
+
+    let mut ticker = Ticker::every(Duration::from_hz(10));
+
+    let mut sequence: u8 = 0;
+
+    loop {
+        ticker.next().await;
+
+        let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
+        let temp_var = TLV_TEMP.load(Ordering::Relaxed);
+        let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
+        data_bytes.insert(0, sequence);    // prepend the sequence to the start.
+
+        sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
+
+        // For now, we use a hard coded id of 123, but will soon change this to be
+        // something that is either read from hardware or NVS. Then we create the
+        // frame which will be sent over the wire.
+        let can_id = ExtendedId::new((5 << 5) as u32).unwrap();
+
+        let frame = Frame::new(
+            //Id::Extended(ExtendedId::ZERO),
+            can_id,
+            &data_bytes,
+        );
+
+        // If we successfully created the frame, add it to the transmit queue of the
+        // CAN transceiver.
+        sender.send(frame.unwrap()).await;
+        /*match frame {
+            None => {},
+            Some(ref f) => match sender (frame).a .transmit(f) {
+                Ok(_) => { },
+                //Err(_) => {},
+                Err(error) => {
+                    log::info!("Transmit Error: {:?}", error);
+                }
+            }
+        }*/
+    }
+}
 
 //#[embassy_executor::main]
 async fn my_main(spawner: Spawner) {
@@ -268,13 +370,14 @@ async fn my_main(spawner: Spawner) {
     let can_cs = Output::new(p.PIN_19, Level::High);
     let can_reset = Output::new(p.PIN_18, Level::Low);
     let can_int = Input::new(p.PIN_22, Pull::None);
-    unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, FLASH_RANGE, tx_report)));
+    unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, FLASH_RANGE)));
 
     // Set Up The CLI Task
     unwrap!(spawner.spawn(cli_task(flash, usb_tx_writer, usb_rx_reader)));
 
     // Set Up The Can Updater Task
     unwrap!(spawner.spawn(can_updater_task(flash)));
+    unwrap!(spawner.spawn(can_reporter()));
 
     // The core loop
     let mut ticker = Ticker::every(Duration::from_secs(1));

@@ -200,6 +200,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
 
 [[package]]
+name = "charge-bay"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "built",
+ "canbus",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.0.1",
+ "defmt-rtt",
+ "embassy-boot-rp",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embassy-usb-logger",
+ "embedded-alloc",
+ "embedded-io-async",
+ "panic-probe",
+ "portable-atomic",
+ "static_cell",
+ "usb-cli",
+ "usb-serial",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1736,6 +1765,7 @@ dependencies = [
  "heapless",
  "libm",
  "log",
+ "mcp25xx",
  "no-std-moving-average",
  "panic-probe",
  "portable-atomic",

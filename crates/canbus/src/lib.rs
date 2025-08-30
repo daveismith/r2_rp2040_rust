@@ -6,8 +6,9 @@ pub mod can_cli_commands;
 pub mod can_consumer;
 pub mod can_updater;
 pub mod can;
+pub mod handlers;
 pub mod isotp;
-mod util;
+pub mod util;
 
 extern crate alloc;
 use core::cell::RefCell;
@@ -26,6 +27,5 @@ type FlashMutex = embassy_sync::mutex::Mutex<CriticalSectionRawMutex, FlashType>
 pub type SpiBusType<'a, T> = Spi<'a, T, spi::Blocking>;
 pub type SpiBusMutex<'a, T> = Mutex<CriticalSectionRawMutex, RefCell<SpiBusType<'a,  T>>>;
 
-//pub type TxReportHandler<'a, T: Instance> = fn(&mut CanTransciever<T>, u32, &mut u8);
-
 pub type TxReportHandler<'a, T> = fn(&mut can::CanTransciever<T>, u32, &mut u8);
+

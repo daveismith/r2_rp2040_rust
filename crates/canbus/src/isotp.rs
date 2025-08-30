@@ -2,8 +2,6 @@ use embassy_time::Timer;
 /// ISO-TP (ISO 15765-2) transport-layer wrapper for any `embedded_can::blocking::Can`.
 /// Supports segmentation, reassembly, and basic flow control (CTS only).
 use embedded_can::{Frame, Id};
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::mutex::Mutex;
 use heapless::Vec;
 use core::cmp::min;
 
@@ -44,24 +42,30 @@ struct TxSession {
 }
 
 /// ISO-TP node: owns a CAN interface, single RX/TX session.
-pub struct IsoTpNode<'a, M: RawMutex + Sync, C: embedded_can::blocking::Can> {
-    can: &'a Mutex<M, C>,
+pub struct IsoTpNode<'a, F>
+where 
+    F: embedded_can::Frame
+{
+    tx_queue: embassy_sync::channel::DynamicSender<'a, F>,
+    //can: &'a Mutex<M, C>,
     tx_id: Id,
     rx_id: Id,
     rx_session: Option<RxSession>,
     tx_session: Option<TxSession>,
 }
 
-impl<'a, M, C> IsoTpNode<'a, M, C>
+impl<'a, F> IsoTpNode<'a, F>
 where
-    M: RawMutex + Sync,
-    C: embedded_can::blocking::Can,
+    F: embedded_can::Frame,
 {
     /// Create a new ISO-TP node.
     /// `tx_id` is the CAN ID you send frames to.
     /// `rx_id` is the CAN ID you listen on for incoming frames.
-    pub fn new(can: &'a Mutex<M, C>, tx_id: Id, rx_id: Id) -> Self {
-        Self { can, tx_id, rx_id, rx_session: None, tx_session: None }
+    //pub fn new(can: &'a Mutex<M, C>, tx_id: Id, rx_id: Id) -> Self {
+    //    Self { can, tx_id, rx_id, rx_session: None, tx_session: None }
+    //}
+    pub fn new(tx_queue: embassy_sync::channel::DynamicSender<'a, F>, tx_id: Id, rx_id: Id) -> Self {
+        Self { tx_queue, tx_id, rx_id, rx_session: None, tx_session: None }
     }
 
     /// Change the transmit CAN ID.
@@ -89,13 +93,19 @@ where
             let mut buf = [0u8; 8];
             buf[0] = (len & 0x0F) as u8;
             buf[1..1 + len].copy_from_slice(data);
-            return match self.can.try_lock() {
+
+            let frame = F::new(self.tx_id, &buf).unwrap();
+            return match self.tx_queue.try_send(frame) {
+                Ok(_) => Ok(()),
+                Err(_) => Err(IsoTpError::CanTransmitError)
+            }
+            /*return match self.can.try_lock() {
                 Ok(mut guard) => {
                     let frame = C::Frame::new(self.tx_id, &buf).unwrap();
                     guard.transmit(&frame).map_err(|_| IsoTpError::CanTransmitError)
                 },
                 Err(_) => Err(IsoTpError::CanTransmitError)
-            }
+            }*/
         }
 
         // First Frame
@@ -107,7 +117,16 @@ where
         ff[1] = (len & 0xFF) as u8;
         ff[2..8].copy_from_slice(&data[..MAX_FIRST_FRAME_DATA]);
 
-        return match self.can.try_lock() {
+        let frame = F::new(self.tx_id, &ff).unwrap();
+        return match self.tx_queue.try_send(frame) {
+            Ok(_) => {
+                self.tx_session = Some(session);
+                Ok(())
+            },
+            Err(_) => Err(IsoTpError::CanTransmitError)
+        }
+
+        /*return match self.can.try_lock() {
             Ok(mut guard) => {
                 let frame = C::Frame::new(self.tx_id, &ff).unwrap();
                 let result = guard.transmit(&frame).map_err(|_| IsoTpError::CanTransmitError);
@@ -117,7 +136,7 @@ where
                 result
             },
             Err(_) => Err(IsoTpError::CanTransmitError)
-        };
+        };*/
 
     }
 
@@ -153,7 +172,13 @@ where
                 // send CTS
                 let mut fc = [0u8; 8];
                 fc[0] = 0x30;
-                match self.can.try_lock() {
+                
+                let fcf = F::new(self.tx_id, &fc).unwrap();
+                match self.tx_queue.try_send(fcf) {
+                    Ok(_) => Ok(Some(IsoTpMessage::InProgress)),
+                    Err(_) => Err(IsoTpError::CanTransmitError)
+                }
+                /*match self.can.try_lock() {
                     Ok(mut guard) => {
                         let fcf = C::Frame::new(self.tx_id, &fc).unwrap();
                         match guard.transmit(&fcf) {
@@ -162,7 +187,7 @@ where
                         }
                     },
                     Err(_) => Err(IsoTpError::CanTransmitError)
-                }
+                }*/
             }
 
             // Consecutive Frame
@@ -195,11 +220,16 @@ where
                             let mut cf = [0u8; 8];
                             cf[0] = 0x20 | (txs.sn & 0x0F);
                             cf[1..1 + chunk].copy_from_slice(&txs.buffer[txs.offset..txs.offset + chunk]);
-                            {
+                            
+                            let f = F::new(self.tx_id, &cf);
+                            self.tx_queue.try_send(f.unwrap()).map_err(|_| IsoTpError::CanTransmitError)?;
+
+                            /*{
                                 let mut guard = self.can.lock().await;
                                 let f = <C::Frame as Frame>::new(self.tx_id, &cf);
                                 guard.transmit(&f.unwrap()).map_err(|_| IsoTpError::CanTransmitError)?;
                             }
+                            */
                             txs.offset += chunk;
                             txs.sn = (txs.sn + 1) & 0x0F;
                             Timer::after_millis(10).await;

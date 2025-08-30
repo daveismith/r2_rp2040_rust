@@ -6,21 +6,23 @@ use async_trait::async_trait;
 extern crate alloc;
 use alloc::boxed::Box;
 
-#[async_trait]
-pub trait CanFrameConsumer<T: embedded_can::Frame> {
+use embedded_can::Frame as CanFrameTrait;
+
+#[async_trait(?Send)]
+pub trait CanFrameConsumer<F: CanFrameTrait> {
     fn set_node_id(&mut self, _node_id: u32) {}
     fn accepts(&self, id: u8, is_remote: bool) -> bool;
-    async fn on_frame(&mut self, frame: &T);
+    async fn on_frame(&mut self, frame: &F);
     async fn tick(&mut self);
 }
 
 /// Dispatcher for routing frames to registered consumers
-pub struct CanSimpleDispatcher<'a, const N: usize, T: embedded_can::Frame> {
+pub struct CanSimpleDispatcher<'a, const N: usize, F: CanFrameTrait> {
     node_id: u32,
-    consumers: Vec<&'a mut dyn CanFrameConsumer<T>, N>,
+    consumers: Vec<&'a mut (dyn CanFrameConsumer<F>), N>,
 }
 
-impl<'a, const N: usize, T: embedded_can::Frame> CanSimpleDispatcher<'a, N, T> {
+impl<'a, const N: usize, F: CanFrameTrait> CanSimpleDispatcher<'a, N, F> {
     pub const fn new(node_id: u32) -> Self {
         Self {
             node_id: node_id,
@@ -37,11 +39,11 @@ impl<'a, const N: usize, T: embedded_can::Frame> CanSimpleDispatcher<'a, N, T> {
         }
     }
 
-    pub fn register(&mut self, consumer: &'a mut (dyn CanFrameConsumer<T> + Send + 'a)) -> Result<(), ()> {
+    pub fn register(&mut self, consumer: &'a mut (dyn CanFrameConsumer<F> + 'a)) -> Result<(), ()> {
         self.consumers.push(consumer).map_err(|_| ())
     }
 
-    pub async fn dispatch(&mut self, frame: &T) {
+    pub async fn dispatch(&mut self, frame: &F) {
 
         // Extract The Node Id
         let (node_id, cmd_id) = match frame.id() {

@@ -1,51 +1,40 @@
-use core::ops::{DerefMut, Range};
+use core::fmt::Debug;
+use core::future::IntoFuture;
 
-//use cortex_m::peripheral;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_rp::gpio::{Input, Output};
-use embassy_rp::peripherals;
 use embassy_rp::spi::Instance;
-use embassy_sync::blocking_mutex::raw::{RawMutex, CriticalSectionRawMutex};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::DynamicReceiver;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::pubsub::{PubSubChannel, Publisher};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker, Timer};
 use embedded_can::nb::Can;
 use embedded_can::ExtendedId;
-use async_trait::async_trait;
 extern crate alloc;
-use alloc::boxed::Box;
 
 use mcp25xx::bitrates::clock_16mhz::CNF_1000K_BPS;
 use mcp25xx::registers::{OperationMode, CANINTE, RXB0CTRL, RXB1CTRL, RXM};
 use mcp25xx::{AcceptanceFilter, Config, IdHeader, MCP25xx};
 
-use embassy_futures::select::{select3, select4, Either3, Either4};
+use embassy_futures::select::{select, select4, Either4};
 
-use sequential_storage::cache::NoCache;
-use sequential_storage::map::fetch_item;
-use static_cell::StaticCell;
-use crate::util::Settings;
-use crate::can_updater::CanFirmwareUpdater;
-
-use crate::{SpiBusType, TxReportHandler};
-use crate::{FlashMutex, SpiBusMutex};
-
+use crate::SpiBusType;
 use crate::can_consumer::{CanSimpleDispatcher, CanFrameConsumer};
 
-pub type CanTransciever<'a, T> = MCP25xx<SpiDevice<'static, CriticalSectionRawMutex, SpiBusType<'a, T>, Output<'static>>>;
+//pub type CanTransciever<'a, T> = MCP25xx<SpiDevice<'static, CriticalSectionRawMutex, SpiBusType<'a, T>, Output<'static>>>;
+pub type CanTransciever<'a, T> = MCP25xx<SpiDevice<'a, CriticalSectionRawMutex, SpiBusType<'a, T>, Output<'a>>>;
 pub type CanTranscieverMutex<'a, T> = Mutex<CriticalSectionRawMutex, CanTransciever<'a, T>>;
 
-const CAP: usize = 64;
-const SUBS: usize = 1;
-const PUBS: usize = 2;
+pub(in crate) const CAP: usize = 64;
+pub(in crate) const SUBS: usize = 1;
+pub(in crate) const PUBS: usize = 2;
 
 pub type ConfigurationEventChannelType = PubSubChannel<CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
 pub type ConfigurationEventPublisherType<'a> = Publisher<'a, CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
 pub static CONFIGURATION_CHANNEL: ConfigurationEventChannelType  = PubSubChannel::new();
 pub static NEEDS_TICK_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-
-const DEFAULT_NODE_ID: u32 = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigurationEvent {
@@ -85,158 +74,118 @@ fn configure_mcp25xx<T: Instance>(
     mcp25xx.write_register(ints).unwrap();
 }
 
-struct MyHandler<'a, M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usize> {
-    configuration_publisher: embassy_sync::pubsub::Publisher<'a, M, T, CAP, SUBS, PUBS> 
+pub struct CanService<'a, const N: usize, BUS, F>
+where
+    BUS: embassy_rp::spi::Instance,
+    //C: embedded_can::nb::Can<Frame = F>,
+    F: embedded_can::Frame
+{
+    pub can_bus: CanTranscieverMutex<'a, BUS>,
+    reset: Output<'a>,
+    int: Input<'a>,
+    node_id: u32,
+    dispatcher: CanSimpleDispatcher<'a, N, F>,
+    tx_subscriber: DynamicReceiver<'a, F>,
 }
 
-impl<'a, M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usize> MyHandler<'a, M, T, CAP, SUBS, PUBS> {
+impl<'a, const N: usize, BUS> CanService<'a, N, BUS, mcp25xx::CanFrame>
+where
+    BUS: embassy_rp::spi::Instance,
+    //C: embedded_can::nb::Can<Frame = F>,
+    //F: embedded_can::Frame
+{
 
-    pub const fn new(publisher: embassy_sync::pubsub::Publisher<'a, M, T, CAP, SUBS, PUBS>) -> Self {
+    pub fn new(
+        can_bus: CanTranscieverMutex<'a, BUS>,
+        reset: Output<'a>,
+        int: Input<'a>,
+        node_id: u32,
+        tx_subscriber: DynamicReceiver<'a, mcp25xx::CanFrame>,
+
+    ) -> Self {
+        let dispatcher: CanSimpleDispatcher<'_, N, mcp25xx::CanFrame> = CanSimpleDispatcher::new(node_id);
+
         Self {
-            configuration_publisher: publisher
+            can_bus: can_bus,
+            reset: reset,
+            int: int,
+            node_id: node_id,
+            dispatcher: dispatcher,
+            tx_subscriber: tx_subscriber
         }
     }
 
-}
-
-#[async_trait]
-impl<T: embedded_can::Frame + Sync, M: RawMutex + Sync, const CAP: usize, const SUBS: usize, const PUBS: usize> CanFrameConsumer<T> for MyHandler<'_, M, ConfigurationEvent, CAP, SUBS, PUBS> {
-
-    fn accepts(&self, id: u8, is_remote: bool) -> bool {
-        //matches!(id, Id::Standard(sid) if sid.as_raw() >= 0x600 && sid.as_raw() < 0x700)
-        id == 0 && is_remote
+    pub fn register(&mut self, consumer: &'a mut (dyn CanFrameConsumer<mcp25xx::CanFrame> + 'a)) -> Result<(), ()> {
+        self.dispatcher.register(consumer)
     }
 
-    async fn on_frame(&mut self, frame: &T) {
-        // Handle the frame
-        log::info!("got frame: {:?}: {:?}", frame.id(), frame.data());
-        // Publish The Rate
-        let message = ConfigurationEvent::IntervalUpdate { hz: 10 };
-        //self.configuration_publisher.publish_immediate(message);
-        self.configuration_publisher.publish(message).await;
-    }
+    // Run Function
+    pub async fn run(&mut self) {
+        //Timer::after_secs(2).await;
 
-    async fn tick(&mut self) {}
-}
+        // Reset the MCP25xx chip
+        self.reset.set_low();
+        Timer::after_millis(100).await;
+        self.reset.set_high(); // bring the chip out of reset
 
-#[embassy_executor::task]
-pub async fn can_handler(
-    spi_bus: &'static SpiBusMutex<'static, peripherals::SPI1>,
-    cs: Output<'static>,
-    mut reset: Output<'static>,
-    mut int: Input<'static>,
-    flash: &'static FlashMutex,
-    flash_range: Range<u32>,
-    tx_report: TxReportHandler<'static, peripherals::SPI1>
-) {
-    Timer::after_secs(2).await;
-    let mut sequence = 0 as u8;
+        {
+            let mut mcp25xx = self.can_bus.lock().await;
+            configure_mcp25xx(&mut mcp25xx, self.node_id);
+        }
 
-    // Read The Node ID
-    let mut data_buffer: [u8; 128] = [0; 128];
-    let mut node_id: u32 = {
-        let mut flash = flash.lock().await;
-        fetch_item::<Settings, u32, _>(
-            flash.deref_mut(),
-            flash_range,
-            &mut NoCache::new(),
-            &mut data_buffer,
-            &Settings::CanId,
-        )
-        .await.unwrap_or(Some(DEFAULT_NODE_ID)).unwrap_or(DEFAULT_NODE_ID)
-    };
+        // Set up an optional ticker variable. When present, this will trigger periodic events
+        // which will cause the device to transmit the current angle.
+        let mut ticker: Option<Ticker> = None;   // Default Rate is 1Hz
 
-    // Reset the MCP25xx chip
-    reset.set_low();
-    Timer::after_millis(100).await;
-    reset.set_high(); // bring the chip out of reset
+        let mut configuration_subscriber = CONFIGURATION_CHANNEL.subscriber().unwrap();
 
-    // Set up the SPI bus for connecting to the device
-    let spi = SpiDevice::new(&spi_bus, cs);
-    let mcp25xx  = MCP25xx { spi };
-    static CAN: StaticCell<CanTranscieverMutex<peripherals::SPI1>> = StaticCell::new();
-    let can_bus = CAN.init(Mutex::new(mcp25xx));
+        loop {
+            // Check if we need to process RX
+            let (process_rx, process_configuration, tx_frame,  needs_tick) = 
+                match select4(self.int.wait_for_low(), configuration_subscriber.next_message_pure(), self.tx_subscriber.receive(), NEEDS_TICK_SIGNAL.wait()).await {
+                    Either4::First(_) => (true, None, None, false),                                 // received message
+                    Either4::Second(vals) => (false, Some(vals), None, false),  // triggered from a settings update
+                    Either4::Third(frame) => (false, None, Some(frame), false),           // indicate a frame needs to be transmitted
+                    Either4::Fourth(_) => (false, None, None, true)                                 // indicates a tick request has been recieved 
+                };
 
-    // Perform Initial Configuration of the MCP25xx
-    {
-        let mut mcp25xx = can_bus.lock().await;
-        configure_mcp25xx(&mut mcp25xx, node_id);
-    }
-
-    // Set up an optional ticker variable. When present, this will trigger periodic events
-    // which will cause the device to transmit the current angle.
-    let mut ticker: Option<Ticker> = None;
-
-    let mut handler = MyHandler::new(CONFIGURATION_CHANNEL.publisher().unwrap());
-    let mut firmware_updater = CanFirmwareUpdater::new(can_bus, node_id, 2);
-
-    let mut dispatcher: CanSimpleDispatcher<'_, 4, mcp25xx::CanFrame>= CanSimpleDispatcher::new(node_id);
-    dispatcher.register(&mut handler).unwrap();
-    dispatcher.register(&mut firmware_updater).unwrap();
-
-    let mut configuration_subscriber = CONFIGURATION_CHANNEL.subscriber().unwrap();
-
-    loop {
-        // Check if we need to process RX
-        let (process_configuration, process_rx, process_tx, needs_tick) = match ticker {
-            // We're running without a ticker, so we wait until we get an interrupt
-            // indicating there is data to process. Then we indicate that we do need
-            // to process a received frame (process_rx = true)
-            None => {
-                match select3(int.wait_for_low(), configuration_subscriber.next_message_pure(), NEEDS_TICK_SIGNAL.wait()).await {
-                    Either3::First(_) => (None, true, false, false),                                // received message
-                    Either3::Second(vals) => (Some(vals), false, false, false), // triggered based on settings update
-                    Either3::Third(_) => (None, false, false, true),                                // indicate a tick request has been requested
-                }
-            },
-            // We're running with a ticker, which means that there are two reasons we
-            // could proceed:
-            // 1. Our ticker has fired an event. We don't need to process received
-            //    frames in this case (process_rx = false)
-            // 2. The interrupt pin has gone low, so we indicate that we do need to
-            //    process a received frame (process_rx = true)
-            Some(ref mut t) => match select4(t.next(), int.wait_for_low(), configuration_subscriber.next_message_pure(), NEEDS_TICK_SIGNAL.wait()).await {
-                Either4::First(_) => (None, false, true, false),                               // triggered based on the ticker
-                Either4::Second(_) => (None, true, false, false),                              // triggered based on the interrupt
-                Either4::Third(vals) => (Some(vals), false, false, false),  // triggered based on config
-                Either4::Fourth(_) => (None, false, false, true)
+            // Handle configuration changes
+            match process_configuration {
+                Some(ConfigurationEvent::NodeIdUpdate { node_id: new_id }) => {
+                    let mut mcp25xx = self.can_bus.lock().await;
+                    log::info!("Update Node Id to {:?}", new_id);
+                    self.node_id = new_id;
+                    configure_mcp25xx(&mut mcp25xx, self.node_id);
+                    self.dispatcher.set_node_id(self.node_id);
+                },
+                Some(ConfigurationEvent::IntervalUpdate { hz }) => { 
+                    log::info!("Update Interval to {:?} Hz", hz);
+                    ticker.replace(Ticker::every(Duration::from_hz(hz)));
+                },
+                None => {}
             }
-        };
 
-        // Handle configuration changes
-        match process_configuration {
-            Some(ConfigurationEvent::NodeIdUpdate { node_id: new_id }) => {
-                let mut mcp25xx = can_bus.lock().await;
-                log::info!("Update Node Id to {:?}", new_id);
-                node_id = new_id;
-                configure_mcp25xx(&mut mcp25xx, node_id);
-                dispatcher.set_node_id(new_id);
-            },
-            Some(ConfigurationEvent::IntervalUpdate { hz }) => { 
-                log::info!("Update Interval to {:?} Hz", hz);
-                ticker.replace(Ticker::every(Duration::from_hz(hz)));
-            },
-            None => {}
-        }
+            if process_rx {
+                let maybe_frame = {
+                    let mut guard = self.can_bus.lock().await;
+                    guard.receive()
+                };
+                match maybe_frame {
+                    Ok(frame) => self.dispatcher.dispatch(&frame).await,
+                    _ => {}
+                };
+            }
+            
+            if tx_frame.is_some() {
+                let f = tx_frame.unwrap();
+                let mut mcp25xx = self.can_bus.lock().await;
+                let _ = mcp25xx.transmit(&f);
+            }
 
-        if process_rx {
-            let maybe_frame = {
-                let mut guard = can_bus.lock().await;
-                guard.receive()
-            };
-            match maybe_frame {
-                Ok(frame) => dispatcher.dispatch(&frame).await,
-                _ => {}
-            };
-        }
-        
-        if process_tx {
-            let mut mcp25xx = can_bus.lock().await;
-            tx_report(&mut mcp25xx, node_id, &mut sequence);
-        }
-
-        if needs_tick {
-            dispatcher.tick().await;    // Always Tick
+            if needs_tick {
+                self.dispatcher.tick().await;    // Always Tick
+            }
         }
     }
+
 }

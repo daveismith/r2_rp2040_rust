@@ -9,9 +9,8 @@ use alloc::fmt;
 use async_trait::async_trait;
 use embassy_boot_rp::{AlignedBuffer, FirmwareUpdater, FirmwareUpdaterConfig, State};
 use embassy_embedded_hal::flash::partition::Partition;
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver};
-use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
 use embedded_can::ExtendedId;
 use heapless::Vec;
@@ -88,18 +87,18 @@ pub fn from_linkerfile<'a>(
 }
 
 /// A handler that drives ISO-TP on a single tx/rx ID pair.
-pub struct CanFirmwareUpdater<'a, M: RawMutex + Sync, C: embedded_can::blocking::Can> {
-    node: IsoTpNode<'a, M, C>,
+pub struct CanFirmwareUpdater<'a, F: embedded_can::Frame> {
+    node: IsoTpNode<'a, F>,
     node_id: u32,
     base_cmd_id: u8,
     tx_receiver: TxChannelReceiver<'a>,
 }
 
-impl<'a, M: RawMutex + Sync, C: embedded_can::blocking::Can> CanFirmwareUpdater<'a, M, C> {
+impl<'a, F: embedded_can::Frame> CanFirmwareUpdater<'a, F> {
     /// `can` is your shared CAN interface.
     /// `node_id` is the node id the device listens on (e.g. 5).
     /// `base_cmd_id` is the base command id you listen on, and you respond on +1 (e.g. 2 (and 3)).
-    pub fn new(can: &'a Mutex<M, C>, node_id: u32, base_cmd_id: u8) -> Self {
+    pub fn new(tx_queue: embassy_sync::channel::DynamicSender<'a, F>, node_id: u32, base_cmd_id: u8) -> Self {
         let rx_id = embedded_can::Id::Extended(
             ExtendedId::new((node_id << 5) + (base_cmd_id & 0x1f) as u32).unwrap(),
         );
@@ -107,7 +106,7 @@ impl<'a, M: RawMutex + Sync, C: embedded_can::blocking::Can> CanFirmwareUpdater<
             ExtendedId::new((node_id << 5) + (base_cmd_id & 0x1f) as u32 + 1).unwrap(),
         );
 
-        let node = IsoTpNode::new(can, tx_id, rx_id);
+        let node = IsoTpNode::<F>::new(tx_queue, tx_id, rx_id);
         let tx_receiver = TX_CHANNEL.receiver();
         Self {
             node,
@@ -130,12 +129,10 @@ impl<'a, M: RawMutex + Sync, C: embedded_can::blocking::Can> CanFirmwareUpdater<
     }
 }
 
-#[async_trait]
-impl<'a, M, C, T> CanFrameConsumer<T> for CanFirmwareUpdater<'a, M, C>
+#[async_trait(?Send)]
+impl<'a, F> CanFrameConsumer<F> for  CanFirmwareUpdater<'a, F>
 where
-    M: RawMutex + Sync + Send + 'static,
-    C: embedded_can::blocking::Can + Send + 'static,
-    T: embedded_can::Frame + Sync + Send + fmt::Debug + 'static,
+    F: embedded_can::Frame + Sync + Send + fmt::Debug + 'static
 {
     fn set_node_id(&mut self, node_id: u32) {
         self.node_id = node_id;
@@ -147,7 +144,7 @@ where
         cmd_id == self.base_cmd_id
     }
 
-    async fn on_frame(&mut self, frame: &T) {
+    async fn on_frame(&mut self, frame: &F) {
         // drive ISO-TP receive state machine
         if let Ok(Some(IsoTpMessage::Complete(payload))) = self.node.receive(frame).await {
             DFU_SIGNAL.try_send(payload).unwrap();

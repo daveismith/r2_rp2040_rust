@@ -6,7 +6,10 @@ authors = ["David Smith <1734595+daveismith@users.noreply.github.com>"]
 license = "MIT or Apache-2.0"
 
 [features]
+default = ["usb-cli"]
 usb-cli = ["dep:usb-cli"]
+mcp25625 = ["mcp25xx/mcp25625"]
+mcp2515 = ["mcp25xx/mcp2515"]
 
 [dependencies]
 async-trait = "0.1"
@@ -28,7 +31,8 @@ embedded-hal-bus = "0.3.0"
 embedded-io-async = "0.6.1"
 heapless = "0.8.0"
 log = { version = "0.4.27", features = ["max_level_info"]}
-mcp25xx = { version = "0.3.0", features = ["mcp25625"] }
+mcp25xx = { version = "0.3.0" }
+# , features = ["mcp25625"]
 num_enum = { version = "0.7.4", default-features = false, features = [] }
 sequential-storage = "5.0.0"
 slice-copy = "0.3.0"

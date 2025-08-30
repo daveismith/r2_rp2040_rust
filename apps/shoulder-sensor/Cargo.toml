@@ -48,7 +48,7 @@ panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 embedded-alloc = "0.6.0"
 static_cell = "2.1.1"
 
-canbus = { path = "../../crates/canbus", features = ["usb-cli"] }
+canbus = { path = "../../crates/canbus", features = ["usb-cli", "mcp25625"] }
 usb-cli = { path = "../../crates/usb-cli" }
 usb-serial = { path = "../../crates/usb-serial" }
 
@@ -59,7 +59,7 @@ log = { version = "0.4.27", features = ["max_level_info"]}
 format_no_std = "1.2.0"
 smart-leds = "0.4.0"
 
-#mcp25xx = { version = "0.3.0", features = ["mcp25625"] }
+mcp25xx = { version = "0.3.0", features = ["mcp25625"] }
 embedded-can = "0.4.1"
 embedded-hal-async = "1.0.0"
 #embedded-hal-bus = "0.3.0"
