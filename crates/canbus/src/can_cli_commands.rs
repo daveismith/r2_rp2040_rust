@@ -107,7 +107,19 @@ where
                     }
                 }
             },
-            Ok(util::Settings::CanReportInterval) => { Ok(()) },
+            Ok(util::Settings::CanReportInterval) => { 
+                match args[2].parse::<u64>() {
+                    Ok(hz) => {
+                        let event = ConfigurationEvent::IntervalUpdate { hz: hz };
+                        self.publisher.publish(event).await;
+                        Ok(())
+                    },
+                    _ => {
+                        writeln!(io, "Invalid Interval").ok();
+                        Err(ParseSettingsError { })
+                    }
+                }
+            },
             Err(_) => { Err(ParseSettingsError {  })}
         };
 

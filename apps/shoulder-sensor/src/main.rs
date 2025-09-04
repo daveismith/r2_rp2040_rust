@@ -14,9 +14,9 @@ use core::ops::{DerefMut, Range};
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicI16, Ordering};
 
-use canbus::handlers::MyHandler;
+use canbus::can::ConfigurationEvent;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
-//use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
+use embassy_futures::select::{select, Either};
 use embassy_sync::pipe::Pipe;
 // Linked-List First Fit Heap allocator (feature = "llff")
 use embedded_alloc::LlffHeap as Heap;
@@ -30,12 +30,11 @@ use embassy_rp::i2c::{self, I2c, InterruptHandler as I2cInterruptHandler};
 use embassy_rp::peripherals;
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
-use embassy_rp::spi::{self, Instance, Spi};
+use embassy_rp::spi::{self, Spi};
 use embassy_rp::{bind_interrupts, Peri};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_time::{Duration, Ticker};
-use embedded_can::blocking::Can;
 use mcp25xx::{CanFrame, MCP25xx};
 use portable_atomic::AtomicU64;
 use sequential_storage::cache::NoCache;
@@ -184,46 +183,6 @@ async fn tlv493d_task(i2c_bus: &'static I2c1Bus) {
     }
 }
 
-fn tx_report<T: Instance>(mcp25xx: &mut canbus::can::CanTransciever<T>, node_id: u32, sequence: &mut u8) {
-    // We fired because of the ticker, so we are going to send a data report.
-    // Currently this consists of a sequence number, the sensor angle and the 
-    // sensor temperature. Both angle & temperature are stored in a shared 
-    // AtomicI16. We'll read this value and convert it to the data which we
-    // then send over the line (in big endian format right now)
-
-    let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
-    let temp_var = TLV_TEMP.load(Ordering::Relaxed);
-    let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
-    data_bytes.insert(0, *sequence);    // prepend the sequence to the start.
-
-    *sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
-
-    // For now, we use a hard coded id of 123, but will soon change this to be
-    // something that is either read from hardware or NVS. Then we create the
-    // frame which will be sent over the wire.
-    let can_id = ExtendedId::new((node_id << 5) as u32).unwrap();
-
-    let frame = Frame::new(
-        //Id::Extended(ExtendedId::ZERO),
-        can_id,
-        &data_bytes,
-    );
-
-    // If we successfully created the frame, add it to the transmit queue of the
-    // CAN transceiver.
-    match frame {
-        None => {},
-        Some(ref f) => match mcp25xx.transmit(f) {
-            Ok(_) => { },
-            //Err(_) => {},
-            Err(error) => {
-                log::info!("Transmit Error: {:?}", error);
-            }
-        }
-    }
-}
-    
-
 #[embassy_executor::task]
 pub async fn can_handler(
     spi_bus: &'static SpiBusMutex<'static, peripherals::SPI1>,
@@ -274,45 +233,54 @@ pub async fn can_handler(
 #[embassy_executor::task]
 pub async fn can_reporter() {
     let sender: embassy_sync::channel::DynamicSender<'_, CanFrame> = TX_QUEUE.dyn_sender();
+    let mut config_subscriber = canbus::can::CONFIGURATION_CHANNEL.dyn_subscriber().unwrap();
 
     let mut ticker = Ticker::every(Duration::from_hz(10));
 
     let mut sequence: u8 = 0;
+    let mut node_id: u32 = 5;
 
     loop {
-        ticker.next().await;
 
-        let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
-        let temp_var = TLV_TEMP.load(Ordering::Relaxed);
-        let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
-        data_bytes.insert(0, sequence);    // prepend the sequence to the start.
-
-        sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
-
-        // For now, we use a hard coded id of 123, but will soon change this to be
-        // something that is either read from hardware or NVS. Then we create the
-        // frame which will be sent over the wire.
-        let can_id = ExtendedId::new((5 << 5) as u32).unwrap();
-
-        let frame = Frame::new(
-            //Id::Extended(ExtendedId::ZERO),
-            can_id,
-            &data_bytes,
-        );
-
-        // If we successfully created the frame, add it to the transmit queue of the
-        // CAN transceiver.
-        sender.send(frame.unwrap()).await;
-        /*match frame {
-            None => {},
-            Some(ref f) => match sender (frame).a .transmit(f) {
-                Ok(_) => { },
-                //Err(_) => {},
-                Err(error) => {
-                    log::info!("Transmit Error: {:?}", error);
+        match select(config_subscriber.next_message_pure(), ticker.next()).await {
+            Either::First(event) => {
+                match event {
+                    ConfigurationEvent::NodeIdUpdate { node_id: new_id } => {
+                        log::info!("update node_id to {:?}", new_id);
+                        node_id = new_id;
+                    },
+                    ConfigurationEvent::IntervalUpdate { hz: update_interval } => {
+                        log::info!("update interval to {:?}", update_interval);
+                        ticker = Ticker::every(Duration::from_hz(update_interval));
+                    }
                 }
+            },
+            Either::Second(_) => {
+                let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
+                let temp_var = TLV_TEMP.load(Ordering::Relaxed);
+                let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
+                data_bytes.insert(0, sequence);    // prepend the sequence to the start.
+
+                sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
+
+                // For now, we use a hard coded id of 123, but will soon change this to be
+                // something that is either read from hardware or NVS. Then we create the
+                // frame which will be sent over the wire.
+                let can_id = ExtendedId::new((node_id << 5) as u32).unwrap();
+
+                let frame = Frame::new(
+                    can_id,
+                    &data_bytes,
+                );
+
+                // If we successfully created the frame, add it to the transmit queue of the
+                // CAN transceiver.
+                sender.send(frame.unwrap()).await;
             }
-        }*/
+        }
+        //ticker.next().await;
+
+        
     }
 }
 

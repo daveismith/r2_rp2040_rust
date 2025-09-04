@@ -1,5 +1,4 @@
 use core::fmt::Debug;
-use core::future::IntoFuture;
 
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_rp::gpio::{Input, Output};
@@ -18,7 +17,7 @@ use mcp25xx::bitrates::clock_16mhz::CNF_1000K_BPS;
 use mcp25xx::registers::{OperationMode, CANINTE, RXB0CTRL, RXB1CTRL, RXM};
 use mcp25xx::{AcceptanceFilter, Config, IdHeader, MCP25xx};
 
-use embassy_futures::select::{select, select4, Either4};
+use embassy_futures::select::{select4, Either4};
 
 use crate::SpiBusType;
 use crate::can_consumer::{CanSimpleDispatcher, CanFrameConsumer};
@@ -28,7 +27,7 @@ pub type CanTransciever<'a, T> = MCP25xx<SpiDevice<'a, CriticalSectionRawMutex, 
 pub type CanTranscieverMutex<'a, T> = Mutex<CriticalSectionRawMutex, CanTransciever<'a, T>>;
 
 pub(in crate) const CAP: usize = 64;
-pub(in crate) const SUBS: usize = 1;
+pub(in crate) const SUBS: usize = 2;
 pub(in crate) const PUBS: usize = 2;
 
 pub type ConfigurationEventChannelType = PubSubChannel<CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
@@ -133,10 +132,6 @@ where
             configure_mcp25xx(&mut mcp25xx, self.node_id);
         }
 
-        // Set up an optional ticker variable. When present, this will trigger periodic events
-        // which will cause the device to transmit the current angle.
-        let mut ticker: Option<Ticker> = None;   // Default Rate is 1Hz
-
         let mut configuration_subscriber = CONFIGURATION_CHANNEL.subscriber().unwrap();
 
         loop {
@@ -153,15 +148,11 @@ where
             match process_configuration {
                 Some(ConfigurationEvent::NodeIdUpdate { node_id: new_id }) => {
                     let mut mcp25xx = self.can_bus.lock().await;
-                    log::info!("Update Node Id to {:?}", new_id);
                     self.node_id = new_id;
                     configure_mcp25xx(&mut mcp25xx, self.node_id);
                     self.dispatcher.set_node_id(self.node_id);
                 },
-                Some(ConfigurationEvent::IntervalUpdate { hz }) => { 
-                    log::info!("Update Interval to {:?} Hz", hz);
-                    ticker.replace(Ticker::every(Duration::from_hz(hz)));
-                },
+                Some(_) => {},
                 None => {}
             }
 
