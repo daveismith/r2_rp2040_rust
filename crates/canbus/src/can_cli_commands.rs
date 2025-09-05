@@ -1,5 +1,6 @@
 use crate::FlashMutex;
-use crate::can::{ConfigurationEvent, CONFIGURATION_CHANNEL, ConfigurationEventPublisherType};
+use crate::can::ConfigurationEvent;
+use crate::config::ConfigEventPublisher;
 use crate::util::ParseSettingsError;
 use crate::util;
 
@@ -12,27 +13,32 @@ use sequential_storage::cache::NoCache;
 use sequential_storage::map;
 use usb_cli::CommandHandler;
 
-pub struct CanCommand {
-    pub flash: &'static FlashMutex,
-    pub flash_range: &'static Range<u32>,
-    pub publisher: ConfigurationEventPublisherType<'static>,
+pub struct CanCommand<'a> {
+    pub flash: &'a FlashMutex,
+    pub flash_range: &'a Range<u32>,
+    pub publisher: &'a dyn ConfigEventPublisher, // type-erased & thread-safe
 }
 
 //TODO: Figure Out How To Manage This
-impl<'a> CanCommand {
+impl<'a> CanCommand<'a> {
 
-    pub fn new(flash: &'static FlashMutex, flash_range: &'static Range<u32>) -> Self {
+    pub fn new(
+        flash: &'a FlashMutex,
+        flash_range: &'a Range<u32>,
+        publisher: &'a dyn ConfigEventPublisher, // type-erased & thread-safe
+    ) -> Self {
+
         Self { 
             flash: flash,
             flash_range: flash_range,
-            publisher: CONFIGURATION_CHANNEL.publisher().unwrap()
+            publisher: publisher
         }
     }
 
 }
 
 #[async_trait(?Send)]
-impl<IO> CommandHandler<IO> for CanCommand
+impl<'a, IO> CommandHandler<IO> for CanCommand<'a>
 where 
     IO: AsyncWrite + FmtWrite + Send
 {

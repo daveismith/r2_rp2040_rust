@@ -34,6 +34,7 @@ use embassy_rp::spi::{self, Spi};
 use embassy_rp::{bind_interrupts, Peri};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::pubsub::{PubSubChannel, Publisher};
 use embassy_time::{Duration, Ticker};
 use mcp25xx::{CanFrame, MCP25xx};
 use portable_atomic::AtomicU64;
@@ -44,6 +45,7 @@ use static_cell::StaticCell;
 use usb_cli;
 use canbus::{SpiBusMutex, SpiBusType};
 use canbus::can_updater::{can_updater_task, CanFirmwareUpdater};
+use canbus::config::ConfigEventPublisher;
 
 use embedded_can::{ExtendedId, Frame};
 
@@ -78,6 +80,14 @@ type FlashMutex = Mutex<CriticalSectionRawMutex, FlashType>;
 type I2c1Bus = Mutex<NoopRawMutex, I2c<'static, peripherals::I2C1, i2c::Async>>;
 
 static TX_QUEUE: embassy_sync::channel::Channel<CriticalSectionRawMutex, mcp25xx::CanFrame, 4> = embassy_sync::channel::Channel::new();
+
+const CAP: usize = 64;
+const SUBS: usize = 2;
+const PUBS: usize = 2;
+
+type ConfigurationEventChannelType = PubSubChannel<CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
+type ConfigurationEventPublisherType<'a> = Publisher<'a, CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
+static CONFIGURATION_CHANNEL: ConfigurationEventChannelType  = PubSubChannel::new();
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<peripherals::PIO0>;
@@ -142,6 +152,12 @@ async fn cli_task(flash: &'static FlashMutex,
     tx: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, 128>,
     rx: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, 128>
 ) {
+    static CONFIG_PUBLISHER: StaticCell<ConfigurationEventPublisherType<'static>> = StaticCell::new();
+
+    // Initialize once, get a &'static Publisher
+    let concrete = CONFIG_PUBLISHER.init(CONFIGURATION_CHANNEL.publisher().unwrap());
+    let erased: &'static dyn ConfigEventPublisher  = concrete as &dyn ConfigEventPublisher;
+
     // Build the command registry
     let version = usb_cli::Command::new("version", "Print Version Details", cli_commands::VersionCommand);
     let echo = usb_cli::Command::new("echo", "Echo input", usb_cli::handlers::EchoCommand);
@@ -152,7 +168,7 @@ async fn cli_task(flash: &'static FlashMutex,
     let uptime = usb_cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
     let angle = usb_cli::Command::new("angle", "Read sensor angle", cli_commands::AngleCommand);
     let temp = usb_cli::Command::new("temp", "Read sensor temperature", cli_commands::TempCommand);
-    let can = usb_cli::Command::new("can", "Configure CAN Bus", canbus::can_cli_commands::CanCommand::new(flash, &FLASH_RANGE));
+    let can = usb_cli::Command::new("can", "Configure CAN Bus", canbus::can_cli_commands::CanCommand::new(flash, &FLASH_RANGE, erased));
 
     // Create the dispatcher with the registry.
     let commands = &[version, echo, uptime, angle, temp, can, bootload, restart, ];
@@ -196,6 +212,7 @@ pub async fn can_handler(
     let mut data_buffer: [u8; 128] = [0; 128];
     let node_id: u32 = {
         let mut flash = flash.lock().await;
+
         fetch_item::<canbus::util::Settings, u32, _>(
             flash.deref_mut(),
             flash_range,
@@ -219,7 +236,7 @@ pub async fn can_handler(
     let mcp25xx  = MCP25xx { spi };
     let can_bus = Mutex::new(mcp25xx);
 
-    let mut can: canbus::can::CanService<'_, 4, _, mcp25xx::CanFrame> = canbus::can::CanService::new(can_bus, reset, int, 5, TX_QUEUE.dyn_receiver());
+    let mut can: canbus::can::CanService<'_, 4, _, mcp25xx::CanFrame> = canbus::can::CanService::new(can_bus, reset, int, 5, TX_QUEUE.dyn_receiver(), CONFIGURATION_CHANNEL.dyn_subscriber().unwrap());
 
     // Register The Handlers
     //can.register(my_handler).unwrap();
@@ -233,7 +250,8 @@ pub async fn can_handler(
 #[embassy_executor::task]
 pub async fn can_reporter() {
     let sender: embassy_sync::channel::DynamicSender<'_, CanFrame> = TX_QUEUE.dyn_sender();
-    let mut config_subscriber = canbus::can::CONFIGURATION_CHANNEL.dyn_subscriber().unwrap();
+    //let mut config_subscriber = canbus::can::CONFIGURATION_CHANNEL.dyn_subscriber().unwrap();
+    let mut config_subscriber = CONFIGURATION_CHANNEL.dyn_subscriber().unwrap();
 
     let mut ticker = Ticker::every(Duration::from_hz(10));
 

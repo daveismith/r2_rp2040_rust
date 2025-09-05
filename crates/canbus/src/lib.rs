@@ -6,6 +6,7 @@ pub mod can_cli_commands;
 pub mod can_consumer;
 pub mod can_updater;
 pub mod can;
+pub mod config;
 pub mod handlers;
 pub mod isotp;
 pub mod util;
