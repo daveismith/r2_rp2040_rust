@@ -22,3 +22,5 @@ embassy-usb = { version = "0.5.0", features = ["defmt"] }
 fixed-queue = "0.5.1"
 heapless = "0.8.0"
 noline = "0.5.1"
+
+usb-serial = { path = "../../crates/usb-serial" }

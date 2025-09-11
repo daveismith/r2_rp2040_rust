@@ -53,6 +53,7 @@ use no_std_moving_average::MovingAverage;
 
 //use canbus::can::can_handler;
 use usb_serial::usb_handler;
+use usb_serial::USB_PIPE_SIZE;
 
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -149,11 +150,11 @@ async fn colour_wheel(
 
 #[embassy_executor::task]
 async fn cli_task(flash: &'static FlashMutex,
-    tx: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, 128>,
-    rx: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, 128>
+    tx: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>,
+    rx: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>
 ) {
     static CONFIG_PUBLISHER: StaticCell<ConfigurationEventPublisherType<'static>> = StaticCell::new();
-
+    
     // Initialize once, get a &'static Publisher
     let concrete = CONFIG_PUBLISHER.init(CONFIGURATION_CHANNEL.publisher().unwrap());
     let erased: &'static dyn ConfigEventPublisher  = concrete as &dyn ConfigEventPublisher;

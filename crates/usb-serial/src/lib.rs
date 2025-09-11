@@ -22,6 +22,7 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
 });
 
+pub const USB_PIPE_SIZE: usize = 256;
 const BUF_SIZE_DESCRIPTOR: usize = 256;
 const BUF_SIZE_CONTROL: usize = 64;
 const MAX_PACKET_SIZE: usize = 64;
@@ -29,8 +30,8 @@ const MAX_PACKET_SIZE: usize = 64;
 #[embassy_executor::task]
 pub async fn usb_handler(usb: Peri<'static, USB>,
                          serial: &'static str,
-                         mut rx_pipe: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, 128>,
-                         tx_pipe: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, 128>)
+                         mut rx_pipe: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>,
+                         tx_pipe: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>)
 {
     // Create the driver, from the HAL.
     let driver = embassy_rp::usb::Driver::new(usb, Irqs);

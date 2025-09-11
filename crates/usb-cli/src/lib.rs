@@ -12,12 +12,13 @@ use embassy_sync::pipe::Pipe;
 use embassy_time::Timer;
 use heapless::Vec;
 use noline::builder::EditorBuilder;
+use usb_serial::USB_PIPE_SIZE;
 
-pub const CAP: usize = 128;
+//pub const CAP: usize = 128;
 pub const MAX_ARGS: usize = 8;
 const MAX_LINE_SIZE: usize = 64;
 
-pub type UsbPipe = Pipe<CriticalSectionRawMutex, CAP>;
+pub type UsbPipe = Pipe<CriticalSectionRawMutex, USB_PIPE_SIZE>;
 
 // --- Trait for Command Handlers ---
 
@@ -98,8 +99,8 @@ where
 
 // CLI Handler
 pub async fn cli_handler<'a>(
-    tx: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, 128>,
-    rx: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, 128>,
+    tx: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
+    rx: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
     commands: &[Command<io::IO<'a>>],
     prompt: &'a str
 ) {

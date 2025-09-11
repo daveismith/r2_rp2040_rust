@@ -4,16 +4,17 @@ use core::usize;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex};
 use embassy_usb::driver::EndpointError;
 use embedded_io_async::{ErrorKind, Write as AsyncWrite};
+use usb_serial::USB_PIPE_SIZE;
 
 pub struct IO<'a> {
-    pub stdin: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, 128>,
-    pub stdout: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, 128>,
+    pub stdin: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
+    pub stdout: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
 }
 
 impl<'a> IO<'a> {
     pub fn new(
-        stdin: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, 128>,
-        stdout: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, 128>,
+        stdin: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
+        stdout: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
     ) -> Self {
         Self {
             stdin,
