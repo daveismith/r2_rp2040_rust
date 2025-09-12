@@ -6,25 +6,34 @@ use embassy_rp::spi::Instance;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::DynamicReceiver;
 use embassy_sync::mutex::Mutex;
-use embassy_sync::pubsub::DynSubscriber;
+use embassy_sync::pubsub::{PubSubChannel, Publisher};
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use embedded_can::nb::Can;
 use embedded_can::ExtendedId;
+use portable_atomic::Ordering;
 extern crate alloc;
 
 use mcp25xx::bitrates::clock_16mhz::CNF_1000K_BPS;
 use mcp25xx::registers::{OperationMode, CANINTE, RXB0CTRL, RXB1CTRL, RXM};
 use mcp25xx::{AcceptanceFilter, Config, IdHeader, MCP25xx};
 
-use embassy_futures::select::{select4, Either4};
+use embassy_futures::select::{select3, Either3, select4, Either4};
 
-use crate::SpiBusType;
+use crate::{SpiBusType, CAN_NODE_ID};
 use crate::can_consumer::{CanSimpleDispatcher, CanFrameConsumer};
 
 //pub type CanTransciever<'a, T> = MCP25xx<SpiDevice<'static, CriticalSectionRawMutex, SpiBusType<'a, T>, Output<'static>>>;
 pub type CanTransciever<'a, T> = MCP25xx<SpiDevice<'a, CriticalSectionRawMutex, SpiBusType<'a, T>, Output<'a>>>;
 pub type CanTranscieverMutex<'a, T> = Mutex<CriticalSectionRawMutex, CanTransciever<'a, T>>;
+
+pub(in crate) const CAP: usize = 64;
+pub(in crate) const SUBS: usize = 2;
+pub(in crate) const PUBS: usize = 2;
+
+type ConfigurationEventChannelType = PubSubChannel<CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
+pub(in crate) type ConfigurationEventPublisherType<'a> = Publisher<'a, CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
+pub static CONFIGURATION_CHANNEL: ConfigurationEventChannelType = PubSubChannel::new();
 
 pub static NEEDS_TICK_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
@@ -78,7 +87,6 @@ where
     node_id: u32,
     dispatcher: CanSimpleDispatcher<'a, N, F>,
     tx_subscriber: DynamicReceiver<'a, F>,
-    config_subscriber: DynSubscriber<'a, ConfigurationEvent>
 }
 
 impl<'a, const N: usize, BUS> CanService<'a, N, BUS, mcp25xx::CanFrame>
@@ -94,11 +102,9 @@ where
         int: Input<'a>,
         node_id: u32,
         tx_subscriber: DynamicReceiver<'a, mcp25xx::CanFrame>,
-        config_subscriber: DynSubscriber<'a, ConfigurationEvent>
     ) -> Self {
         let dispatcher: CanSimpleDispatcher<'_, N, mcp25xx::CanFrame> = CanSimpleDispatcher::new(node_id);
-
-        //let c = CONFIGURATION_CHANNEL.dyn_subscriber().unwrap();
+        CAN_NODE_ID.store(node_id, Ordering::Relaxed);
 
         Self {
             can_bus: can_bus,
@@ -107,7 +113,6 @@ where
             node_id: node_id,
             dispatcher: dispatcher,
             tx_subscriber: tx_subscriber,
-            config_subscriber: config_subscriber
         }
     }
 
@@ -129,12 +134,12 @@ where
             configure_mcp25xx(&mut mcp25xx, self.node_id);
         }
 
-        //let mut configuration_subscriber = CONFIGURATION_CHANNEL.subscriber().unwrap();
+        let mut config_subscriber = CONFIGURATION_CHANNEL.subscriber().unwrap();
 
         loop {
             // Check if we need to process RX
             let (process_rx, process_configuration, tx_frame,  needs_tick) = 
-                match select4(self.int.wait_for_low(), self.config_subscriber.next_message_pure(), self.tx_subscriber.receive(), NEEDS_TICK_SIGNAL.wait()).await {
+                match select4(self.int.wait_for_low(), config_subscriber.next_message_pure(), self.tx_subscriber.receive(), NEEDS_TICK_SIGNAL.wait()).await {
                     Either4::First(_) => (true, None, None, false),                                 // received message
                     Either4::Second(vals) => (false, Some(vals), None, false),  // triggered from a settings update
                     Either4::Third(frame) => (false, None, Some(frame), false),           // indicate a frame needs to be transmitted
@@ -146,6 +151,7 @@ where
                 Some(ConfigurationEvent::NodeIdUpdate { node_id: new_id }) => {
                     let mut mcp25xx = self.can_bus.lock().await;
                     self.node_id = new_id;
+                    CAN_NODE_ID.store(new_id, Ordering::Relaxed);
                     configure_mcp25xx(&mut mcp25xx, self.node_id);
                     self.dispatcher.set_node_id(self.node_id);
                 },

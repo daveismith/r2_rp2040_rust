@@ -49,8 +49,11 @@ embedded-alloc = "0.6.0"
 static_cell = "2.1.1"
 
 canbus = { path = "../../crates/canbus", features = ["usb-cli", "mcp25625"] }
+config = { path = "../../crates/config" }
 usb-cli = { path = "../../crates/usb-cli" }
 usb-serial = { path = "../../crates/usb-serial" }
+
+dyn-clone = { version = "1", default-features = false }
 
 embedded-io-async = "0.6.1"
 async-trait = "0.1"

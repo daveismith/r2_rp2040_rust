@@ -1,0 +1,26 @@
+[package]
+name = "config"
+version = "0.1.0"
+edition = "2021"
+authors = ["David Smith <1734595+daveismith@users.noreply.github.com>"]
+license = "MIT or Apache-2.0"
+
+#[package.metadata.embassy_docs]
+#src_base = "https://github.com/embassy-rs/embassy/blob/embassy-sync-v$VERSION/embassy-sync/src/"
+#src_base_git = "https://github.com/embassy-rs/embassy/blob/$COMMIT/embassy-sync/src/"
+#target = "thumbv7em-none-eabi"
+
+[dependencies]
+async-trait = "0.1"
+#cortex-m = "0.7.7"
+#embedded-io-async = "0.6.1"
+embedded-alloc = "0.6.0"
+#embassy-rp = { version = "0.7.0", features = ["rp2040"] }
+embassy-sync = { version = "0.7.0", features = ["defmt"] }
+#embassy-time = "0.4.0"
+#embassy-usb = { version = "0.5.0", features = ["defmt"] }
+#fixed-queue = "0.5.1"
+#heapless = "0.8.0"
+#noline = "0.5.1"
+
+dyn-clone = { version = "1", default-features = false }

@@ -6,7 +6,6 @@ pub mod can_cli_commands;
 pub mod can_consumer;
 pub mod can_updater;
 pub mod can;
-pub mod config;
 pub mod handlers;
 pub mod isotp;
 pub mod util;
@@ -18,15 +17,17 @@ use embassy_rp::peripherals;
 use embassy_rp::spi::{self, Spi};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use portable_atomic::AtomicU32;
 
 const FLASH_SIZE: usize = 8 * 1024 * 1024;
 
 // -- Types for use
-type FlashType = embassy_rp::flash::Flash<'static, peripherals::FLASH, flash::Async, FLASH_SIZE>;
-type FlashMutex = embassy_sync::mutex::Mutex<CriticalSectionRawMutex, FlashType>;
+pub type FlashType = embassy_rp::flash::Flash<'static, peripherals::FLASH, flash::Async, FLASH_SIZE>;
+pub type FlashMutex = embassy_sync::mutex::Mutex<CriticalSectionRawMutex, FlashType>;
 
 pub type SpiBusType<'a, T> = Spi<'a, T, spi::Blocking>;
 pub type SpiBusMutex<'a, T> = Mutex<CriticalSectionRawMutex, RefCell<SpiBusType<'a,  T>>>;
 
 pub type TxReportHandler<'a, T> = fn(&mut can::CanTransciever<T>, u32, &mut u8);
 
+pub static CAN_NODE_ID: AtomicU32 = AtomicU32::new(0);

@@ -14,9 +14,9 @@ use core::ops::{DerefMut, Range};
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicI16, Ordering};
 
+extern crate alloc;
 use canbus::can::ConfigurationEvent;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
-use embassy_futures::select::{select, Either};
 use embassy_sync::pipe::Pipe;
 // Linked-List First Fit Heap allocator (feature = "llff")
 use embedded_alloc::LlffHeap as Heap;
@@ -43,9 +43,8 @@ use sequential_storage::map::fetch_item;
 use smart_leds::RGB8;
 use static_cell::StaticCell;
 use usb_cli;
-use canbus::{SpiBusMutex, SpiBusType};
+use canbus::{SpiBusMutex, SpiBusType, CAN_NODE_ID};
 use canbus::can_updater::{can_updater_task, CanFirmwareUpdater};
-use canbus::config::ConfigEventPublisher;
 
 use embedded_can::{ExtendedId, Frame};
 
@@ -59,8 +58,6 @@ use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::mutex::Mutex;
 
 use {defmt_rtt as _, panic_probe as _}; // global logger
-
-extern crate alloc;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -80,14 +77,6 @@ type FlashMutex = Mutex<CriticalSectionRawMutex, FlashType>;
 type I2c1Bus = Mutex<NoopRawMutex, I2c<'static, peripherals::I2C1, i2c::Async>>;
 
 static TX_QUEUE: embassy_sync::channel::Channel<CriticalSectionRawMutex, mcp25xx::CanFrame, 4> = embassy_sync::channel::Channel::new();
-
-const CAP: usize = 64;
-const SUBS: usize = 2;
-const PUBS: usize = 2;
-
-type ConfigurationEventChannelType = PubSubChannel<CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
-type ConfigurationEventPublisherType<'a> = Publisher<'a, CriticalSectionRawMutex, ConfigurationEvent, CAP, SUBS, PUBS>;
-static CONFIGURATION_CHANNEL: ConfigurationEventChannelType  = PubSubChannel::new();
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<peripherals::PIO0>;
@@ -152,12 +141,6 @@ async fn cli_task(flash: &'static FlashMutex,
     tx: UsbPipeWriter<'static>,
     rx: UsbPipeReader<'static>
 ) {
-    static CONFIG_PUBLISHER: StaticCell<ConfigurationEventPublisherType<'static>> = StaticCell::new();
-    
-    // Initialize once, get a &'static Publisher
-    let concrete = CONFIG_PUBLISHER.init(CONFIGURATION_CHANNEL.publisher().unwrap());
-    let erased: &'static dyn ConfigEventPublisher  = concrete as &dyn ConfigEventPublisher;
-
     // Build the command registry
     let version = usb_cli::Command::new("version", "Print Version Details", cli_commands::VersionCommand);
     let echo = usb_cli::Command::new("echo", "Echo input", usb_cli::handlers::EchoCommand);
@@ -168,7 +151,7 @@ async fn cli_task(flash: &'static FlashMutex,
     let uptime = usb_cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
     let angle = usb_cli::Command::new("angle", "Read sensor angle", cli_commands::AngleCommand);
     let temp = usb_cli::Command::new("temp", "Read sensor temperature", cli_commands::TempCommand);
-    let can = usb_cli::Command::new("can", "Configure CAN Bus", canbus::can_cli_commands::CanCommand::new(flash, &FLASH_RANGE, erased));
+    let can = usb_cli::Command::new("can", "Configure CAN Bus", canbus::can_cli_commands::CanCommand::new(flash, &FLASH_RANGE));
 
     // Create the dispatcher with the registry.
     let commands = &[version, echo, uptime, angle, temp, can, bootload, restart, ];
@@ -222,10 +205,6 @@ pub async fn can_handler(
         )
         .await.unwrap_or(Some(DEFAULT_NODE_ID)).unwrap_or(DEFAULT_NODE_ID)
     };
-
-    //let handler: MyHandler<'_, CriticalSectionRawMutex, canbus::can::ConfigurationEvent, 64, 1, 2> = MyHandler::new(canbus::can::CONFIGURATION_CHANNEL.publisher().unwrap());
-    //static CFG_HANDLER: StaticCell<MyHandler<'_, CriticalSectionRawMutex, canbus::can::ConfigurationEvent, 64, 1, 2> > = StaticCell::new();
-    //let my_handler = CFG_HANDLER.init(handler);
     
     let fw_updater  = canbus::can_updater::CanFirmwareUpdater::new(TX_QUEUE.dyn_sender(), node_id, 2);
     static FW_HANDLER: StaticCell<CanFirmwareUpdater<'_, CanFrame>> = StaticCell::new();
@@ -236,7 +215,7 @@ pub async fn can_handler(
     let mcp25xx  = MCP25xx { spi };
     let can_bus = Mutex::new(mcp25xx);
 
-    let mut can: canbus::can::CanService<'_, 4, _, mcp25xx::CanFrame> = canbus::can::CanService::new(can_bus, reset, int, 5, TX_QUEUE.dyn_receiver(), CONFIGURATION_CHANNEL.dyn_subscriber().unwrap());
+    let mut can: canbus::can::CanService<'_, 4, _, mcp25xx::CanFrame> = canbus::can::CanService::new(can_bus, reset, int, 5, TX_QUEUE.dyn_receiver());
 
     // Register The Handlers
     //can.register(my_handler).unwrap();
@@ -250,55 +229,35 @@ pub async fn can_handler(
 #[embassy_executor::task]
 pub async fn can_reporter() {
     let sender: embassy_sync::channel::DynamicSender<'_, CanFrame> = TX_QUEUE.dyn_sender();
-    //let mut config_subscriber = canbus::can::CONFIGURATION_CHANNEL.dyn_subscriber().unwrap();
-    let mut config_subscriber = CONFIGURATION_CHANNEL.dyn_subscriber().unwrap();
-
-    let mut ticker = Ticker::every(Duration::from_hz(10));
+    let mut ticker = Ticker::every(Duration::from_hz(100));
 
     let mut sequence: u8 = 0;
-    let mut node_id: u32 = 5;
-
+    
     loop {
+        ticker.next().await;
 
-        match select(config_subscriber.next_message_pure(), ticker.next()).await {
-            Either::First(event) => {
-                match event {
-                    ConfigurationEvent::NodeIdUpdate { node_id: new_id } => {
-                        log::info!("update node_id to {:?}", new_id);
-                        node_id = new_id;
-                    },
-                    ConfigurationEvent::IntervalUpdate { hz: update_interval } => {
-                        log::info!("update interval to {:?}", update_interval);
-                        ticker = Ticker::every(Duration::from_hz(update_interval));
-                    }
-                }
-            },
-            Either::Second(_) => {
-                let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
-                let temp_var = TLV_TEMP.load(Ordering::Relaxed);
-                let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
-                data_bytes.insert(0, sequence);    // prepend the sequence to the start.
+        // Grab The Data & Build The Frame
+        let angle_var = TLV_ANGLE.load(Ordering::Relaxed);    
+        let temp_var = TLV_TEMP.load(Ordering::Relaxed);
+        let mut data_bytes = [angle_var.to_be_bytes(), temp_var.to_be_bytes()].concat();
+        data_bytes.insert(0, sequence);    // prepend the sequence to the start.
 
-                sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
+        sequence = sequence.wrapping_add(1); // Increment The Counter, rolling over 
 
-                // For now, we use a hard coded id of 123, but will soon change this to be
-                // something that is either read from hardware or NVS. Then we create the
-                // frame which will be sent over the wire.
-                let can_id = ExtendedId::new((node_id << 5) as u32).unwrap();
+        // For now, we use a hard coded id of 123, but will soon change this to be
+        // something that is either read from hardware or NVS. Then we create the
+        // frame which will be sent over the wire.
+        let node_id = CAN_NODE_ID.load(Ordering::Relaxed);
+        let can_id = ExtendedId::new((node_id << 5) as u32).unwrap();
 
-                let frame = Frame::new(
-                    can_id,
-                    &data_bytes,
-                );
+        let frame = Frame::new(
+            can_id,
+            &data_bytes,
+        );
 
-                // If we successfully created the frame, add it to the transmit queue of the
-                // CAN transceiver.
-                sender.send(frame.unwrap()).await;
-            }
-        }
-        //ticker.next().await;
-
-        
+        // If we successfully created the frame, add it to the transmit queue of the
+        // CAN transceiver.
+        sender.send(frame.unwrap()).await;        
     }
 }
 

@@ -1,6 +1,5 @@
 use crate::FlashMutex;
-use crate::can::ConfigurationEvent;
-use crate::config::ConfigEventPublisher;
+use crate::can::{ConfigurationEvent, CONFIGURATION_CHANNEL, ConfigurationEventPublisherType};
 use crate::util::ParseSettingsError;
 use crate::util;
 
@@ -16,7 +15,7 @@ use usb_cli::CommandHandler;
 pub struct CanCommand<'a> {
     pub flash: &'a FlashMutex,
     pub flash_range: &'a Range<u32>,
-    pub publisher: &'a dyn ConfigEventPublisher, // type-erased & thread-safe
+    pub publisher: ConfigurationEventPublisherType<'a>
 }
 
 //TODO: Figure Out How To Manage This
@@ -25,13 +24,12 @@ impl<'a> CanCommand<'a> {
     pub fn new(
         flash: &'a FlashMutex,
         flash_range: &'a Range<u32>,
-        publisher: &'a dyn ConfigEventPublisher, // type-erased & thread-safe
     ) -> Self {
 
         Self { 
             flash: flash,
             flash_range: flash_range,
-            publisher: publisher
+            publisher: CONFIGURATION_CHANNEL.publisher().unwrap(),
         }
     }
 
@@ -104,7 +102,6 @@ where
                         // Publish Notification That CAN ID has changed.
                         let event = ConfigurationEvent::NodeIdUpdate { node_id: can_id };
                         self.publisher.publish(event).await;
-                        //self.publisher.publish(setting).await;
                         result
                     },
                     _ => {

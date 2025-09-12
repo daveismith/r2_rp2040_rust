@@ -7,7 +7,7 @@ license = "MIT or Apache-2.0"
 
 [features]
 default = ["usb-cli"]
-usb-cli = ["dep:usb-cli"]
+usb-cli = ["dep:usb-cli", "dep:config"]
 mcp25625 = ["mcp25xx/mcp25625"]
 mcp2515 = ["mcp25xx/mcp2515"]
 
@@ -32,10 +32,11 @@ embedded-io-async = "0.6.1"
 heapless = "0.8.0"
 log = { version = "0.4.27", features = ["max_level_info"]}
 mcp25xx = { version = "0.3.0" }
-# , features = ["mcp25625"]
 num_enum = { version = "0.7.4", default-features = false, features = [] }
+portable-atomic = { version = "1.11.1", features = ["critical-section"] }
 sequential-storage = "5.0.0"
 slice-copy = "0.3.0"
 static_cell = "2.1.1"
 
+config = { path = "../../crates/config", optional = true }
 usb-cli = { path = "../../crates/usb-cli", optional = true }
