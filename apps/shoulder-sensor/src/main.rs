@@ -51,9 +51,8 @@ use embedded_can::{ExtendedId, Frame};
 
 use no_std_moving_average::MovingAverage;
 
-//use canbus::can::can_handler;
 use usb_serial::usb_handler;
-use usb_serial::USB_PIPE_SIZE;
+use usb_serial::{UsbPipe, UsbPipeReader, UsbPipeWriter};
 
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -150,8 +149,8 @@ async fn colour_wheel(
 
 #[embassy_executor::task]
 async fn cli_task(flash: &'static FlashMutex,
-    tx: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>,
-    rx: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>
+    tx: UsbPipeWriter<'static>,
+    rx: UsbPipeReader<'static>
 ) {
     static CONFIG_PUBLISHER: StaticCell<ConfigurationEventPublisherType<'static>> = StaticCell::new();
     
@@ -318,8 +317,8 @@ async fn my_main(spawner: Spawner) {
     let flash = FLASH.init(Mutex::new(flash));
 
     // Set Up The USB Handler
-    static SHARED_RX_PIPE: StaticCell<usb_cli::UsbPipe> = StaticCell::new();
-    static SHARED_TX_PIPE: StaticCell<usb_cli::UsbPipe> = StaticCell::new();
+    static SHARED_RX_PIPE: StaticCell<UsbPipe> = StaticCell::new();
+    static SHARED_TX_PIPE: StaticCell<UsbPipe> = StaticCell::new();
 
 
     let rx_pipe = SHARED_RX_PIPE.init(Pipe::new());

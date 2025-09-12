@@ -7,18 +7,14 @@ use alloc::boxed::Box;
 use async_trait::async_trait;
 use core::fmt::Write as FmtWrite;
 use embedded_io_async::Write as AsyncWrite;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::pipe::Pipe;
 use embassy_time::Timer;
 use heapless::Vec;
 use noline::builder::EditorBuilder;
-use usb_serial::USB_PIPE_SIZE;
+use usb_serial::{UsbPipeReader, UsbPipeWriter};
 
 //pub const CAP: usize = 128;
 pub const MAX_ARGS: usize = 8;
 const MAX_LINE_SIZE: usize = 64;
-
-pub type UsbPipe = Pipe<CriticalSectionRawMutex, USB_PIPE_SIZE>;
 
 // --- Trait for Command Handlers ---
 
@@ -99,8 +95,8 @@ where
 
 // CLI Handler
 pub async fn cli_handler<'a>(
-    tx: embassy_sync::pipe::Writer<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
-    rx: embassy_sync::pipe::Reader<'a, CriticalSectionRawMutex, USB_PIPE_SIZE>,
+    tx: UsbPipeWriter<'a>,
+    rx: UsbPipeReader<'a>,
     commands: &[Command<io::IO<'a>>],
     prompt: &'a str
 ) {

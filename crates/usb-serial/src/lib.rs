@@ -15,23 +15,27 @@ use embassy_usb::{
     Builder, Config,
     class::cdc_acm::{CdcAcmClass, State}
 };
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embedded_io_async::Write;
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
 });
 
-pub const USB_PIPE_SIZE: usize = 256;
+const USB_PIPE_SIZE: usize = 256;
 const BUF_SIZE_DESCRIPTOR: usize = 256;
 const BUF_SIZE_CONTROL: usize = 64;
 const MAX_PACKET_SIZE: usize = 64;
 
+pub type UsbPipe = embassy_sync::pipe::Pipe<ThreadModeRawMutex, USB_PIPE_SIZE>;
+pub type UsbPipeWriter<'a> = embassy_sync::pipe::Writer<'a, ThreadModeRawMutex, USB_PIPE_SIZE>;
+pub type UsbPipeReader<'a> = embassy_sync::pipe::Reader<'a, ThreadModeRawMutex, USB_PIPE_SIZE>;
+
 #[embassy_executor::task]
 pub async fn usb_handler(usb: Peri<'static, USB>,
                          serial: &'static str,
-                         mut rx_pipe: embassy_sync::pipe::Writer<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>,
-                         tx_pipe: embassy_sync::pipe::Reader<'static, CriticalSectionRawMutex, USB_PIPE_SIZE>)
+                         mut rx_pipe: UsbPipeWriter<'static>,
+                         tx_pipe: UsbPipeReader<'static>)
 {
     // Create the driver, from the HAL.
     let driver = embassy_rp::usb::Driver::new(usb, Irqs);
