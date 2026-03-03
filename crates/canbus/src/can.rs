@@ -18,7 +18,7 @@ use mcp25xx::bitrates::clock_16mhz::CNF_1000K_BPS;
 use mcp25xx::registers::{OperationMode, CANINTE, RXB0CTRL, RXB1CTRL, RXM};
 use mcp25xx::{AcceptanceFilter, Config, IdHeader, MCP25xx};
 
-use embassy_futures::select::{select3, Either3, select4, Either4};
+use embassy_futures::select::{select4, Either4};
 
 use crate::{SpiBusType, CAN_NODE_ID};
 use crate::can_consumer::{CanSimpleDispatcher, CanFrameConsumer};

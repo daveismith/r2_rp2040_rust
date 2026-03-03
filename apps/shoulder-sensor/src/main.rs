@@ -15,7 +15,6 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicI16, Ordering};
 
 extern crate alloc;
-use canbus::can::ConfigurationEvent;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_sync::pipe::Pipe;
 // Linked-List First Fit Heap allocator (feature = "llff")
@@ -34,7 +33,6 @@ use embassy_rp::spi::{self, Spi};
 use embassy_rp::{bind_interrupts, Peri};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
-use embassy_sync::pubsub::{PubSubChannel, Publisher};
 use embassy_time::{Duration, Ticker};
 use mcp25xx::{CanFrame, MCP25xx};
 use portable_atomic::AtomicU64;
@@ -215,7 +213,7 @@ pub async fn can_handler(
     let mcp25xx  = MCP25xx { spi };
     let can_bus = Mutex::new(mcp25xx);
 
-    let mut can: canbus::can::CanService<'_, 4, _, mcp25xx::CanFrame> = canbus::can::CanService::new(can_bus, reset, int, 5, TX_QUEUE.dyn_receiver());
+    let mut can: canbus::can::CanService<'_, 4, _, mcp25xx::CanFrame> = canbus::can::CanService::new(can_bus, reset, int, node_id, TX_QUEUE.dyn_receiver());
 
     // Register The Handlers
     //can.register(my_handler).unwrap();

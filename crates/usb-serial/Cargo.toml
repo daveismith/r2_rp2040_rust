@@ -6,9 +6,9 @@ authors = ["David Smith <1734595+daveismith@users.noreply.github.com>"]
 license = "MIT or Apache-2.0"
 
 [dependencies]
-embassy-executor = "0.8.0"
+embassy-executor = "0.9.1"
 embassy-futures = { version = "0.1.1" }
-embassy-rp = { version = "0.7.0", features = [
+embassy-rp = { version = "0.8.0", features = [
     "defmt",
     "unstable-pac",
     "time-driver",
