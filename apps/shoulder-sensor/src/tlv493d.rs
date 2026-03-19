@@ -239,10 +239,10 @@ where
     }
 
     #[allow(dead_code)]
-    pub async fn read_angle_and_temp_f32(&mut self) -> (f32, f32) {
+    pub async fn read_angle_and_temp_f32(&mut self) -> (f32, f32, f32) {
         let v = self.read().await;
-        let val = atan2(v.x as f64, v.y as f64) as f32;
-        let angle = (val * 180.0) / PI_F32;
-        (angle, v.temp)
+        let rad = atan2(v.x as f64, v.y as f64) as f32;
+        let angle = (rad * 180.0) / PI_F32;
+        (rad, angle, v.temp)
     }
 }

@@ -19,7 +19,7 @@ pub trait CanFrameConsumer<F: CanFrameTrait> {
 /// Dispatcher for routing frames to registered consumers
 pub struct CanSimpleDispatcher<'a, const N: usize, F: CanFrameTrait> {
     node_id: u32,
-    consumers: Vec<&'a mut (dyn CanFrameConsumer<F>), N>,
+    consumers: Vec<&'a mut dyn CanFrameConsumer<F>, N>,
 }
 
 impl<'a, const N: usize, F: CanFrameTrait> CanSimpleDispatcher<'a, N, F> {

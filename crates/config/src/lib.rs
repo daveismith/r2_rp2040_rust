@@ -25,7 +25,7 @@ impl<'a, PSB> ConfigEntryPublisher for Pub<'a, PSB, BoxedConfigEntry>
 where
     PSB: PubSubBehavior<BoxedConfigEntry> + Send + Sync + ?Sized,
 {
-    async fn publish(&self, ev: BoxedConfigEntry) {
+    async fn publish(&self, _ev: BoxedConfigEntry) {
         //Pub::publish(self, ev).await
     }
 }
@@ -36,7 +36,7 @@ impl<'a, R, const N: usize, const NP: usize, const NS: usize>
 where
     R: RawMutex + Send + Sync,
 {
-    async fn publish(&self, ev: BoxedConfigEntry) {
+    async fn publish(&self, _ev: BoxedConfigEntry) {
         //Publisher::publish(self, ev).await
     }
 }

@@ -27,10 +27,11 @@ use embassy_rp::flash;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::i2c::{self, I2c, InterruptHandler as I2cInterruptHandler};
 use embassy_rp::peripherals;
-use embassy_rp::pio::{InterruptHandler, Pio};
-use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
+//use embassy_rp::pio::{InterruptHandler, Pio};
+//use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
 use embassy_rp::spi::{self, Spi};
-use embassy_rp::{bind_interrupts, Peri};
+//use embassy_rp::{bind_interrupts, Peri};
+use embassy_rp::bind_interrupts;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_time::{Duration, Ticker};
@@ -38,7 +39,8 @@ use mcp25xx::{CanFrame, MCP25xx};
 use portable_atomic::AtomicU64;
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::fetch_item;
-use smart_leds::RGB8;
+use signalo_filters::traits::WithConfig;
+//use smart_leds::RGB8;
 use static_cell::StaticCell;
 use usb_cli;
 use canbus::{SpiBusMutex, SpiBusType, CAN_NODE_ID};
@@ -54,6 +56,10 @@ use usb_serial::{UsbPipe, UsbPipeReader, UsbPipeWriter};
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::mutex::Mutex;
+
+use signalo_filters::traits::Filter;
+use signalo_filters::median::Median;
+use signalo_filters::observe::alpha_beta::{AlphaBeta, Config as AlphaBetaConfig};
 
 use {defmt_rtt as _, panic_probe as _}; // global logger
 
@@ -77,10 +83,11 @@ type I2c1Bus = Mutex<NoopRawMutex, I2c<'static, peripherals::I2C1, i2c::Async>>;
 static TX_QUEUE: embassy_sync::channel::Channel<CriticalSectionRawMutex, mcp25xx::CanFrame, 4> = embassy_sync::channel::Channel::new();
 
 bind_interrupts!(struct Irqs {
-    PIO0_IRQ_0 => InterruptHandler<peripherals::PIO0>;
+    //PIO0_IRQ_0 => InterruptHandler<peripherals::PIO0>;
     I2C1_IRQ => I2cInterruptHandler<peripherals::I2C1>;
 });
 
+/*
 /// Input a value 0 to 255 to get a color value
 /// The colours are a transition r - g - b - back to r.
 fn wheel(mut wheel_pos: u8) -> RGB8 {
@@ -133,6 +140,7 @@ async fn colour_wheel(
         }
     }
 }
+*/
 
 #[embassy_executor::task]
 async fn cli_task(flash: &'static FlashMutex,
@@ -165,16 +173,27 @@ async fn tlv493d_task(i2c_bus: &'static I2c1Bus) {
     let i2c_dev = I2cDevice::new(i2c_bus);
     let mut sensor = tlv493d::Tlv493dDriver::new(i2c_dev, 0x5eu8, tlv493d::Mode::Master).await;
     
-    let mut angle_avg = MovingAverage::<i16, i32, 20>::new();
+    //let mut angle_avg = MovingAverage::<i16, i32, 20>::new();
     let mut temp_avg = MovingAverage::<i16, i32, 20>::new();
 
+    let mut median_filter: Median<f32, 3> = Median::default();
+    let mut angle_ab = AlphaBeta::with_config(AlphaBetaConfig {
+        alpha: 0.05f32,
+        beta: 0.00128f32 / 50.0,
+    });
+
     // Fire Every 10ms (100Hz)
-    let mut ticker = Ticker::every(Duration::from_millis(10));
+    let mut ticker = Ticker::every(Duration::from_millis(20));
     loop {
-        let (angle, temp) = sensor.read_angle_and_temp_f32().await;
-        let result_angle = angle_avg.average((angle * 100.0) as i16);
+        let (rad, _angle, temp) = sensor.read_angle_and_temp_f32().await;
+        //let result_angle = angle_avg.average((angle * 100.0) as i16);
         let result_temp = temp_avg.average((temp * 100.0) as i16);
-        TLV_ANGLE.store(result_angle, Ordering::Relaxed);
+
+        let median_angle = median_filter.filter(rad);
+        let result_angle_rad = angle_ab.filter(median_angle);
+        let result_angle_ab = result_angle_rad.to_degrees();
+        
+        TLV_ANGLE.store((result_angle_ab * 100.0) as i16, Ordering::Relaxed);
         TLV_TEMP.store(result_temp, Ordering::Relaxed);
         ticker.next().await;
     }
@@ -287,9 +306,9 @@ async fn my_main(spawner: Spawner) {
 
     // Set Up Colour Wheel Indicator
     // adafruit rp2040 CAN BUST Feather
-    let mut neopixel_power = Output::new(p.PIN_20, Level::High);
-    neopixel_power.set_high();
-    unwrap!(spawner.spawn(colour_wheel(p.PIO0, p.DMA_CH0, p.PIN_21)));
+    //let mut neopixel_power = Output::new(p.PIN_20, Level::High);
+    //neopixel_power.set_high();
+    //unwrap!(spawner.spawn(colour_wheel(p.PIO0, p.DMA_CH0, p.PIN_21)));
 
     // I2C Setup
     log::info!("set up i2c ");

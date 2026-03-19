@@ -166,19 +166,19 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
- "embassy-rp",
+ "embassy-rp 0.8.0",
  "embassy-sync",
  "embassy-time",
  "embedded-can",
  "embedded-hal-async",
  "embedded-hal-bus",
- "embedded-io-async",
+ "embedded-io-async 0.6.1",
  "heapless",
  "log",
  "mcp25xx",
  "num_enum",
  "portable-atomic",
- "sequential-storage",
+ "sequential-storage 5.0.0",
  "slice-copy",
  "static_cell",
  "usb-cli",
@@ -216,22 +216,28 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
- "embassy-rp",
+ "embassy-rp 0.9.0",
  "embassy-sync",
  "embassy-time",
  "embassy-usb",
  "embassy-usb-logger",
- "embedded-alloc",
+ "embedded-alloc 0.7.0",
  "embedded-can",
- "embedded-io-async",
+ "embedded-io-async 0.7.0",
  "mcp25xx",
  "panic-probe",
  "portable-atomic",
- "sequential-storage",
+ "sequential-storage 7.1.0",
  "static_cell",
  "usb-cli",
  "usb-serial",
 ]
+
+[[package]]
+name = "circular-buffer"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14c638459986b83c2b885179bd4ea6a2cbb05697b001501a56adb3a3d230803b"
 
 [[package]]
 name = "codespan-reporting"
@@ -250,7 +256,7 @@ dependencies = [
  "async-trait",
  "dyn-clone",
  "embassy-sync",
- "embedded-alloc",
+ "embedded-alloc 0.6.0",
 ]
 
 [[package]]
@@ -482,7 +488,7 @@ dependencies = [
  "cortex-m-rt",
  "defmt",
  "embassy-boot",
- "embassy-rp",
+ "embassy-rp 0.8.0",
  "embassy-sync",
  "embassy-time",
  "embedded-storage",
@@ -499,7 +505,7 @@ dependencies = [
  "defmt",
  "defmt-rtt",
  "embassy-boot-rp",
- "embassy-rp",
+ "embassy-rp 0.8.0",
  "embassy-sync",
  "embassy-time",
  "embedded-storage",
@@ -616,8 +622,47 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-hal-nb",
- "embedded-io",
- "embedded-io-async",
+ "embedded-io 0.6.1",
+ "embedded-io-async 0.6.1",
+ "embedded-storage",
+ "embedded-storage-async",
+ "fixed",
+ "nb 1.1.0",
+ "pio",
+ "rand_core 0.6.4",
+ "rand_core 0.9.3",
+ "rp-pac",
+ "rp2040-boot2",
+ "sha2-const-stable",
+ "smart-leds",
+]
+
+[[package]]
+name = "embassy-rp"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af8d5ac11a8bc209d359ad98bb10a10f786471dd474790f3a4f991c77ae94f6f"
+dependencies = [
+ "cfg-if",
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "defmt",
+ "document-features",
+ "embassy-embedded-hal",
+ "embassy-futures",
+ "embassy-hal-internal",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-time-driver",
+ "embassy-time-queue-utils",
+ "embassy-usb-driver",
+ "embedded-hal 0.2.7",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-hal-nb",
+ "embedded-io 0.6.1",
+ "embedded-io-async 0.6.1",
  "embedded-storage",
  "embedded-storage-async",
  "fixed",
@@ -640,7 +685,7 @@ dependencies = [
  "cfg-if",
  "critical-section",
  "defmt",
- "embedded-io-async",
+ "embedded-io-async 0.6.1",
  "futures-core",
  "futures-sink",
  "heapless",
@@ -693,7 +738,7 @@ dependencies = [
  "embassy-net-driver-channel",
  "embassy-sync",
  "embassy-usb-driver",
- "embedded-io-async",
+ "embedded-io-async 0.6.1",
  "heapless",
  "ssmarshal",
  "usbd-hid",
@@ -706,7 +751,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17119855ccc2d1f7470a39756b12068454ae27a3eabb037d940b5c03d9c77b7a"
 dependencies = [
  "defmt",
- "embedded-io-async",
+ "embedded-io-async 0.6.1",
 ]
 
 [[package]]
@@ -726,6 +771,18 @@ name = "embedded-alloc"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f2de9133f68db0d4627ad69db767726c99ff8585272716708227008d3f1bddd"
+dependencies = [
+ "const-default",
+ "critical-section",
+ "linked_list_allocator",
+ "rlsf",
+]
+
+[[package]]
+name = "embedded-alloc"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2db634e07f552215f7a3572dc0a4d29760c637fcea5a8c18d2cc291f782c216c"
 dependencies = [
  "const-default",
  "critical-section",
@@ -794,12 +851,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
+name = "embedded-io"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
+
+[[package]]
 name = "embedded-io-async"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
 dependencies = [
- "embedded-io",
+ "embedded-io 0.6.1",
+]
+
+[[package]]
+name = "embedded-io-async"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2564b9f813c544241430e147d8bc454815ef9ac998878d30cc3055449f7fd4c0"
+dependencies = [
+ "embedded-io 0.7.1",
 ]
 
 [[package]]
@@ -929,6 +1001,12 @@ dependencies = [
  "log",
  "url",
 ]
+
+[[package]]
+name = "guts"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17500f73372e0585e6db162044fe220fb1176cfd157b1d61a907d6b09c63f12b"
 
 [[package]]
 name = "half"
@@ -1302,8 +1380,8 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8100b250810ea78c34882c7bc511ebf9ce8b284ef34486e23f2779b6a7e2e345"
 dependencies = [
- "embedded-io",
- "embedded-io-async",
+ "embedded-io 0.6.1",
+ "embedded-io-async 0.6.1",
  "num_enum",
 ]
 
@@ -1588,6 +1666,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
+name = "replace_with"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51743d3e274e2b18df81c4dc6caf8a5b8e15dbe799e0dca05c7617380094e884"
+
+[[package]]
 name = "rgb"
 version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1682,6 +1766,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sequential-storage"
+version = "7.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4580ee0fa08cd41bee9f5b50ed309877e18735370fd4eef5766cc82863ef772"
+dependencies = [
+ "embedded-storage-async",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1725,7 +1818,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shoulder-sensor"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "bitflags 2.9.3",
@@ -1740,15 +1833,15 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
- "embassy-rp",
+ "embassy-rp 0.8.0",
  "embassy-sync",
  "embassy-time",
  "embassy-usb",
  "embassy-usb-logger",
- "embedded-alloc",
+ "embedded-alloc 0.6.0",
  "embedded-can",
  "embedded-hal-async",
- "embedded-io-async",
+ "embedded-io-async 0.6.1",
  "embedded-storage-async",
  "format_no_std",
  "heapless",
@@ -1758,11 +1851,33 @@ dependencies = [
  "no-std-moving-average",
  "panic-probe",
  "portable-atomic",
- "sequential-storage",
+ "sequential-storage 5.0.0",
+ "signalo_filters",
  "smart-leds",
  "static_cell",
  "usb-cli",
  "usb-serial",
+]
+
+[[package]]
+name = "signalo_filters"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a56e20d65cf66a1198f429ef4c53198300391f9f2d3dbbe7f62024ffd3fe3168"
+dependencies = [
+ "circular-buffer",
+ "num-traits",
+ "signalo_traits",
+]
+
+[[package]]
+name = "signalo_traits"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d24e3ee14efca3a3a829b9bd68f63045beb59ea524b698795a33f71bd7ea0301"
+dependencies = [
+ "guts",
+ "replace_with",
 ]
 
 [[package]]
@@ -1992,12 +2107,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cortex-m",
- "embassy-rp",
+ "embassy-rp 0.8.0",
  "embassy-sync",
  "embassy-time",
  "embassy-usb",
- "embedded-alloc",
- "embedded-io-async",
+ "embedded-alloc 0.6.0",
+ "embedded-io-async 0.6.1",
  "fixed-queue",
  "heapless",
  "noline",
@@ -2020,11 +2135,11 @@ version = "0.1.0"
 dependencies = [
  "embassy-executor",
  "embassy-futures",
- "embassy-rp",
+ "embassy-rp 0.8.0",
  "embassy-sync",
  "embassy-usb",
  "embassy-usb-logger",
- "embedded-io-async",
+ "embedded-io-async 0.6.1",
  "log",
 ]
 
