@@ -23,11 +23,11 @@ use embedded_alloc::LlffHeap as Heap;
 
 use defmt::unwrap;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
-use embassy_executor::Spawner;
 use embassy_executor::raw::Executor as RawExecutor;
 use embassy_rp::flash;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::i2c::{self, I2c, InterruptHandler as I2cInterruptHandler};
+use embassy_rp::multicore::{spawn_core1, Stack};
 use embassy_rp::peripherals;
 use embassy_rp::spi::{self, Spi};
 use embassy_rp::bind_interrupts;
@@ -40,7 +40,7 @@ use static_cell::StaticCell;
 use usb_cli;
 use canbus::{SpiBusMutex, SpiBusType};
 use canbus::can_updater::can_updater_task;
-use usb_cli::cpu_handler::GLOBAL_CPU_LOADS;
+use usb_cli::cpu_handler::{ GLOBAL_CPU0_LOADS, GLOBAL_CPU1_LOADS };
 
 use can_tasks::{can_handler, can_reporter};
 use cli_task::cli_task;
@@ -80,21 +80,35 @@ bind_interrupts!(struct Irqs {
 #[embassy_executor::task]
 async fn cpu_usage() {
     let mut previous_tick = 0u64;
-    let mut previous_sleep_tick = 0u64;
+    let mut previous_sleep0_tick = 0u64;
+    let mut previous_sleep1_tick = 0u64;
     let mut ticker = Ticker::every(Duration::from_millis(1000));
     loop {
         let current_tick = Instant::now().as_ticks();
-        let current_sleep_tick = SLEEP_TICKS.load(Ordering::Relaxed);
-        let sleep_tick_difference = (current_sleep_tick - previous_sleep_tick) as f32;
+        let current_sleep0_tick = SLEEP_TICKS_0.load(Ordering::Relaxed);
+        let current_sleep1_tick = SLEEP_TICKS_1.load(Ordering::Relaxed);
+
+        let sleep0_tick_difference = (current_sleep0_tick - previous_sleep0_tick) as f32;
+        let sleep1_tick_difference = (current_sleep1_tick - previous_sleep1_tick) as f32;
+
         let tick_difference = (current_tick - previous_tick) as f32;
-        let usage = 1f32 - sleep_tick_difference / tick_difference;
+        let usage0 = 1f32 - sleep0_tick_difference / tick_difference;
+        let usage1 = 1f32 - sleep1_tick_difference / tick_difference;
+
         previous_tick = current_tick;
-        previous_sleep_tick = current_sleep_tick;
+        previous_sleep0_tick = current_sleep0_tick;
+        previous_sleep1_tick = current_sleep1_tick;
 
         //log::info!("Cpu usage: {}%", usage * 100f32);
-        GLOBAL_CPU_LOADS.lock(|cell| {
+        GLOBAL_CPU0_LOADS.lock(|cell| {
             let mut loads = cell.get();
-            loads.update(usage * 100.0);
+            loads.update(usage0 * 100.0);
+            cell.set(loads);
+        });
+
+        GLOBAL_CPU1_LOADS.lock(|cell| {
+            let mut loads = cell.get();
+            loads.update(usage1 * 100.0);
             cell.set(loads);
         });
         ticker.next().await;
@@ -109,7 +123,7 @@ async fn tlv493d_task(i2c_bus: &'static I2c1Bus) {
 
     // Temperature Averaging
     let mut temp_median_filter: Median<f32, 3> = Median::default();
-    let mut temp_mean_filter: Mean<f32, 20> = Mean::default();
+    let mut temp_mean_filter: Mean<f32, 200> = Mean::default();
 
     let mut median_filter: Median<f32, 3> = Median::default();
     let mut mean_filter: Mean<f32, 20> = Mean::default();
@@ -142,9 +156,45 @@ async fn tlv493d_task(i2c_bus: &'static I2c1Bus) {
 }
 
 //#[embassy_executor::main]
-async fn my_main(spawner: Spawner) {
-    let p = embassy_rp::init(Default::default());
+#[embassy_executor::task]
+async fn my_main(mut watchdog: Watchdog) {
+    //let p = embassy_rp::init(Default::default());
+    // The core loop
+    let mut ticker = Ticker::every(Duration::from_secs(1));
+    loop {
+        watchdog.feed();
+        ticker.next().await;
+        UPTIME.add(1u64, Ordering::AcqRel);
+    }
+}
 
+#[embassy_executor::task]
+async fn core1_task() {
+    let mut ticker = Ticker::every(Duration::from_secs(1));
+    loop {
+        log::info!("Hello from core 1!");
+        ticker.next().await;
+    }
+}
+
+static EXECUTOR_0: StaticCell<RawExecutor> = StaticCell::new();
+static SLEEP_TICKS_0: AtomicU64 = AtomicU64::new(0);
+
+static mut CORE1_STACK: Stack<4096> = Stack::new();
+static EXECUTOR_1: StaticCell<RawExecutor> = StaticCell::new();
+static SLEEP_TICKS_1: AtomicU64 = AtomicU64::new(0);
+
+#[cortex_m_rt::entry]
+fn main() -> ! {
+    {
+        use core::mem::MaybeUninit;
+        const HEAP_SIZE: usize = 1280;
+        static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+        unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
+    }
+
+    let p = embassy_rp::init(Default::default());
+   
     // Override bootloader watchdog
     let mut watchdog = Watchdog::new(p.WATCHDOG);
     watchdog.start(Duration::from_secs(8));
@@ -158,16 +208,12 @@ async fn my_main(spawner: Spawner) {
     // Set Up The USB Handler
     static SHARED_RX_PIPE: StaticCell<UsbPipe> = StaticCell::new();
     static SHARED_TX_PIPE: StaticCell<UsbPipe> = StaticCell::new();
-
     let rx_pipe = SHARED_RX_PIPE.init(Pipe::new());
     let tx_pipe = SHARED_TX_PIPE.init(Pipe::new());
-
     let (usb_rx_reader, usb_rx_writer) = rx_pipe.split();
     let (usb_tx_reader, usb_tx_writer) = tx_pipe.split();
-    unwrap!(spawner.spawn(usb_handler(p.USB, "test", usb_rx_writer, usb_tx_reader)));
-
-    // I2C Setup
-    log::info!("set up i2c ");
+ 
+     // I2C Setup
     let i2c_config = {
         let mut config = i2c::Config::default();
         config.frequency = 400_000;
@@ -176,8 +222,6 @@ async fn my_main(spawner: Spawner) {
     let i2c = i2c::I2c::new_async(p.I2C1, p.PIN_3, p.PIN_2, Irqs, i2c_config);
     static I2C_BUS: StaticCell<I2c1Bus> = StaticCell::new();
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
-
-    unwrap!(spawner.spawn(tlv493d_task(i2c_bus)));
 
     // The feather has a MCP25625, charge bay has MCP2515
     // CAN is SPI0.
@@ -193,55 +237,43 @@ async fn my_main(spawner: Spawner) {
     let can_cs = Output::new(p.PIN_19, Level::High);
     let can_reset = Output::new(p.PIN_18, Level::Low);
     let can_int = Input::new(p.PIN_22, Pull::None);
+
+    // Set Up The Core 1 Executor
+    spawn_core1(
+        p.CORE1,
+        unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
+        move || {
+            let executor = EXECUTOR_1.init(RawExecutor::new(usize::MAX as *mut ()));
+            let spawner = executor.spawner();
+
+            unwrap!(spawner.spawn(tlv493d_task(i2c_bus)));
+            executor_loop_sync(executor, &SLEEP_TICKS_1)
+        },
+    );
+
+
+    // Set Up The Core 0 Executor
+    let core0_executor = EXECUTOR_0.init(RawExecutor::new(usize::MAX as *mut ()));
+    let spawner = core0_executor.spawner();
+
+    unwrap!(spawner.spawn(usb_handler(p.USB, "test", usb_rx_writer, usb_tx_reader)));
+    //unwrap!(spawner.spawn(tlv493d_task(i2c_bus)));
     unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, FLASH_RANGE)));
-
-    // Set Up The CLI Task
     unwrap!(spawner.spawn(cli_task(flash, usb_tx_writer, usb_rx_reader)));
-
-    // Set Up The Can Updater Task
-    unwrap!(spawner.spawn(can_updater_task(flash)));
+    unwrap!(spawner.spawn(can_updater_task(flash)));     // Set Up The Can Updater Task
     unwrap!(spawner.spawn(can_reporter()));
-
     unwrap!(spawner.spawn(cpu_usage()));
+    unwrap!(spawner.spawn(my_main(watchdog)));
 
-    // The core loop
-    let mut ticker = Ticker::every(Duration::from_secs(1));
-    loop {
-        watchdog.feed();
-        ticker.next().await;
-        UPTIME.add(1u64, Ordering::AcqRel);
-    }
+    executor_loop_sync(core0_executor, &SLEEP_TICKS_0);
 }
 
-#[embassy_executor::task]
-async fn core0_task(spawner: Spawner) {
-    my_main(spawner).await
-}
-
-static EXECUTOR: StaticCell<RawExecutor> = StaticCell::new();
-static SLEEP_TICKS: AtomicU64 = AtomicU64::new(0);
-
-#[cortex_m_rt::entry]
-fn main() -> ! {
-    {
-        use core::mem::MaybeUninit;
-        const HEAP_SIZE: usize = 1280;
-        static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-        unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
-    }
-
-    // Set Up The Executor
-    //let executor0 = EXECUTOR0.init(Executor::new());
-    //executor0.run(|spawner| unwrap!(spawner.spawn(core0_task(spawner))));
-    
-    let raw_executor = EXECUTOR.init(RawExecutor::new(usize::MAX as *mut ()));
-    let spawner = raw_executor.spawner();
-    unwrap!(spawner.spawn(core0_task(spawner)));
+fn executor_loop_sync(executor: &'static RawExecutor, sleep_tick_count: &AtomicU64) -> ! {
     loop {
         let before = Instant::now().as_ticks();
         cortex_m::asm::wfe();
         let after = Instant::now().as_ticks();
-        SLEEP_TICKS.fetch_add(after - before, Ordering::Relaxed);
-        unsafe { raw_executor.poll() };
+        sleep_tick_count.fetch_add(after - before, Ordering::Relaxed);
+        unsafe { executor.poll() };
     }
 }

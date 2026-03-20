@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use async_trait::async_trait;
+use embassy_time::Timer;
 use core::fmt::Write as FmtWrite;
 use embedded_io_async::Write as AsyncWrite;
 use core::cell::Cell;
@@ -51,27 +52,51 @@ impl LoadAverages {
 }
 
 // Initialize the global mutex with our struct
-pub static GLOBAL_CPU_LOADS: Mutex<CriticalSectionRawMutex, Cell<LoadAverages>> = 
+pub static GLOBAL_CPU0_LOADS: Mutex<CriticalSectionRawMutex, Cell<LoadAverages>> = 
+    Mutex::new(Cell::new(LoadAverages::new()));
+pub static GLOBAL_CPU1_LOADS: Mutex<CriticalSectionRawMutex, Cell<LoadAverages>> = 
     Mutex::new(Cell::new(LoadAverages::new()));
 pub struct CpuCommand;
+
+impl CpuCommand {
+    
+    async fn print_cpu_usage<IO>(&self, io: &mut IO, cpu: usize, loads: &LoadAverages)
+    where
+        IO: AsyncWrite + FmtWrite + Send,
+    {
+        writeln!(io, "CPU{} Usage:", cpu).ok();
+        Timer::after_micros(100).await; // Yield to allow other tasks to run
+        writeln!(io, "  5s: {:.2}%", loads.load_5s).ok();
+        Timer::after_micros(100).await; // Yield to allow other tasks to run
+        writeln!(io, "  15s: {:.2}%", loads.load_15s).ok();
+        Timer::after_micros(100).await; // Yield to allow other tasks to run
+        writeln!(io, "  60s: {:.2}%", loads.load_60s).ok();
+        Timer::after_micros(100).await; // Yield to allow other tasks to run
+        writeln!(io, "  300s: {:.2}%", loads.load_300s).ok();
+        Timer::after_micros(100).await; // Yield to allow other tasks to run
+        writeln!(io, "  600s: {:.2}%", loads.load_600s).ok();
+        Timer::after_micros(100).await; // Yield to allow other tasks to run
+        writeln!(io, "  900s: {:.2}%", loads.load_900s).ok();
+        Timer::after_micros(100).await; // Yield to allow other tasks to run
+
+    }
+
+}
 
 #[async_trait(?Send)]
 impl<IO> CommandHandler<IO> for CpuCommand
 where 
     IO: AsyncWrite + FmtWrite + Send
 {
+    
     async fn execute(&self, _args: &[&str], io: &mut IO) {
         /*let cpu_freq = embassy_rp::system::SystemClock::cpu_freq();
         let freq_mhz = cpu_freq.integer() / 1_000_000;
         writeln!(io, "CPU Frequency: {} MHz", freq_mhz).ok();*/
-        let current_loads = GLOBAL_CPU_LOADS.lock(|cell| cell.get());
+        let current_loads = GLOBAL_CPU0_LOADS.lock(|cell| cell.get());
+        self.print_cpu_usage(io, 0, &current_loads).await;
 
-        writeln!(io, "CPU Usage:").ok();
-        writeln!(io, "  5s: {:.2}%", current_loads.load_5s).ok();
-        writeln!(io, "  15s: {:.2}%", current_loads.load_15s).ok();
-        writeln!(io, "  60s: {:.2}%", current_loads.load_60s).ok();
-        writeln!(io, "  300s: {:.2}%", current_loads.load_300s).ok();
-        writeln!(io, "  600s: {:.2}%", current_loads.load_600s).ok();
-        writeln!(io, "  900s: {:.2}%", current_loads.load_900s).ok();
+        let current_loads = GLOBAL_CPU1_LOADS.lock(|cell| cell.get());
+        self.print_cpu_usage(io, 1, &current_loads).await;
     }
 }
