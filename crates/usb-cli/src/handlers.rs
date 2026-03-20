@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use core::fmt::Write as FmtWrite;
 use embedded_io_async::Write as AsyncWrite;
 
-
 use crate::CommandHandler;
 
 // --- Example Commands ---

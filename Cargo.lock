@@ -1853,7 +1853,6 @@ dependencies = [
  "portable-atomic",
  "sequential-storage 5.0.0",
  "signalo_filters",
- "smart-leds",
  "static_cell",
  "usb-cli",
  "usb-serial",

@@ -90,7 +90,7 @@ where
             i2c: i2c_dev,
             addr: address,
             initial: [0u8; 10],
-            last_frm: 0xff,
+            last_frm: 0xff
         };
 
         s.configure(mode, true).await;
@@ -111,7 +111,8 @@ where
 
             // Wait for startup delay
             //self._delay.delay_ms(40).map_err(Error::Delay)?;
-            Timer::after_millis(40).await;
+            //Timer::after_millis(40).await;
+            Timer::after_micros(50).await;
 
             // Restart The Sensor
             let _ = self.i2c.write(0x00, &[0xff]).await;
@@ -121,8 +122,11 @@ where
             // Read initial bitmap from device
             let _ = self.i2c.read(self.addr, &mut self.initial[..]).await;
             //.map_err(Error::I2c)?;
-
             log::debug!("Initial state: {:02x?}", self.initial);
+            
+            // Capture the last FRM
+            self.last_frm = self.initial[3] & 0b0000_1100;
+            log::info!("Device reset complete: {:02x?}", self.last_frm);
         }
 
         // Parse out initial mode settings
@@ -191,6 +195,8 @@ where
         let frm = b[3] & 0b0000_1100;
         if self.last_frm == frm {
             log::info!("ADC Lockup");
+            // Reset The Module
+            self.configure(Mode::Master, true).await;
         } else {
             self.last_frm = frm;
         }
