@@ -66,6 +66,7 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
     let mut control_buf = [0; BUF_SIZE_CONTROL];
 
     let mut state = State::new();
+    //let mut state2 = State::new();
     let mut logger_state = State::new();
 
     let mut builder = Builder::new(
@@ -80,6 +81,8 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
     // Create The Serial Class for the CLI. 
     let serial = CdcAcmClass::new(&mut builder, &mut state, MAX_PACKET_SIZE as u16);
 
+    //let serial2 = CdcAcmClass::new(&mut builder, &mut state2, MAX_PACKET_SIZE as u16);
+
     // Create a class for the logger
     let logger_class = CdcAcmClass::new(&mut builder, &mut logger_state, MAX_PACKET_SIZE as u16);
 
@@ -88,7 +91,7 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
     let log_fut = embassy_usb_logger::with_class!(1024, log::LevelFilter::Info, logger_class);
     
     // Set Up Handling for Serial
-    let (mut send, mut recv) = serial.split();        
+    let (mut send, mut recv) = serial.split();  
     
     // Reader function, pull packets from the interface as they come in and publish them into the rx pub/sub queue
     let usb_reader_fut = async move {

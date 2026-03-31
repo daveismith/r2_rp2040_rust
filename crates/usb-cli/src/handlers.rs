@@ -32,8 +32,10 @@ where
     }
 }
 
+#[cfg(feature = "rp2040")]
 pub struct BootloadCommand;
 
+#[cfg(feature = "rp2040")]
 #[async_trait(?Send)]
 impl<IO> CommandHandler<IO> for BootloadCommand
 where 

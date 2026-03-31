@@ -1,11 +1,38 @@
-[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+[target.thumbv6m-none-eabi]
 #runner = "probe-rs run --chip RP2040"
+runner = "elf2uf2-rs --deploy --verbose"
+
+[target.thumbv8m.main-none-eabihf]
+#runner = "probe-rs run --chip RP235x"
 # the line below will load & start a serial monitor, but unfortunately that serial monitor doesn't allow input
 #runner = "elf2uf2-rs --deploy --serial --verbose"
 runner = "elf2uf2-rs --deploy --verbose"
 
 [build]
-target = "thumbv6m-none-eabi"        # Cortex-M0 and Cortex-M0+
+target = "thumbv6m-none-eabi"
+
+[alias]
+# apps
+#build-cyphal-template = ["build", "-p", "cyphal-template", "--target", "thumbv8m.main-none-eabihf"]
+#run-cyphal-template = ["run", "-p", "cyphal-template", "--bin", "cyphal-template", "--target", "thumbv8m.main-none-eabihf"]
+build-cyphal-template = ["build", "-p", "cyphal-template", "--target", "thumbv6m-none-eabi"]
+run-cyphal-template = ["run", "-p", "cyphal-template", "--bin", "cyphal-template", "--target", "thumbv6m-none-eabi"]
+
+build-charge-bay = ["build", "-p", "charge-bay", "--target", "thumbv6m-none-eabi"]
+run-charge-bay = ["run", "-p", "charge-bay", "--bin", "charge-bay", "--target", "thumbv6m-none-eabi"]
+
+build-shoulder-sensor = ["build", "-p", "shoulder-sensor", "--target", "thumbv6m-none-eabi"]
+run-shoulder-sensor = ["run", "-p", "shoulder-sensor", "--bin", "shoulder-sensor", "--target", "thumbv6m-none-eabi"]
+
+# boot
+build-embassy-bootloader = ["build", "-p", "embassy-bootloader", "--target", "thumbv6m-none-eabi"]
+run-embassy-bootloader = ["run", "-p", "embassy-bootloader", "--bin", "embassy-bootloader", "--target", "thumbv6m-none-eabi"]
+
+# crates (library members)
+build-canbus = ["build", "-p", "canbus"]
+build-config = ["build", "-p", "config"]
+build-usb-cli = ["build", "-p", "usb-cli"]
+build-usb-serial = ["build", "-p", "usb-serial"]
 
 # [unstable]
 # nicer workspace inheritance for lints/dep overrides (optional)
