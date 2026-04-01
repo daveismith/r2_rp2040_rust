@@ -37,7 +37,7 @@ use smart_leds::RGB8;
 use static_cell::StaticCell;
 
 use cli_task::cli_task;
-use usb_cli::cpu_handler::{ GLOBAL_CPU0_LOADS, GLOBAL_CPU1_LOADS };
+use usb_cli::cpu_handler::{LoadAverages, GLOBAL_CPU0_LOADS, GLOBAL_CPU1_LOADS};
 use usb_serial::usb_handler;
 use usb_serial::UsbPipe;
 
@@ -71,6 +71,17 @@ const NVS_RANGE: core::ops::Range<u32> = 0x480000..0x500000;
 pub type FlashType = Flash<'static, peripherals::FLASH, flash::Async, FLASH_SIZE>;
 pub type FlashMutex = Mutex<CriticalSectionRawMutex, FlashType>;
 
+fn update_cpu_load(
+    loads: &embassy_sync::blocking_mutex::Mutex<CriticalSectionRawMutex, core::cell::Cell<LoadAverages>>,
+    usage_percent: f32,
+) {
+    loads.lock(|cell| {
+        let mut current = cell.get();
+        current.update(usage_percent);
+        cell.set(current);
+    });
+}
+
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<peripherals::PIO0>;
 });
@@ -98,28 +109,18 @@ async fn cpu_usage() {
         previous_sleep1_tick = current_sleep1_tick;
 
         //log::info!("Cpu usage: {}%", usage * 100f32);
-        GLOBAL_CPU0_LOADS.lock(|cell| {
-            let mut loads = cell.get();
-            loads.update(usage0 * 100.0);
-            cell.set(loads);
-        });
-
-        GLOBAL_CPU1_LOADS.lock(|cell| {
-            let mut loads = cell.get();
-            loads.update(usage1 * 100.0);
-            cell.set(loads);
-        });
+        update_cpu_load(&GLOBAL_CPU0_LOADS, usage0 * 100.0);
+        update_cpu_load(&GLOBAL_CPU1_LOADS, usage1 * 100.0);
         ticker.next().await;
     }
 }
 
 #[embassy_executor::task]
-async fn my_main(mut watchdog: Watchdog, mut led: Output<'static>) {
+async fn my_main(mut watchdog: Watchdog) {
     //let p = embassy_rp::init(Default::default());
     // The core loop
     let mut ticker = Ticker::every(Duration::from_secs(1));
     loop {
-        led.toggle();
         watchdog.feed();
         ticker.next().await;
         UPTIME.add(1u64, Ordering::AcqRel);
@@ -197,9 +198,6 @@ fn main() -> ! {
     watchdog.start(Duration::from_secs(8));
     watchdog.feed();
 
-    // LED
-    let led = Output::new(p.PIN_25, Level::Low);
-
     // Set Up The USB Handler
     static SHARED_RX_PIPE: StaticCell<UsbPipe> = StaticCell::new();
     static SHARED_TX_PIPE: StaticCell<UsbPipe> = StaticCell::new();
@@ -238,7 +236,6 @@ fn main() -> ! {
         },
     );
 
-
     // Set Up The Core 0 Executor
     let core0_executor = EXECUTOR_0.init(RawExecutor::new(usize::MAX as *mut ()));
     let spawner = core0_executor.spawner();
@@ -248,7 +245,7 @@ fn main() -> ! {
     unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, NVS_RANGE, node_unique_id)));
     unwrap!(spawner.spawn(cli_task(usb_tx_writer, usb_rx_reader)));
     unwrap!(spawner.spawn(cpu_usage()));
-    unwrap!(spawner.spawn(my_main(watchdog, led)));
+    unwrap!(spawner.spawn(my_main(watchdog)));
 
     executor_loop_sync(core0_executor, &SLEEP_TICKS_0);
 }

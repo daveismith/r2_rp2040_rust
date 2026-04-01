@@ -9,7 +9,7 @@ use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_rp::gpio::{Input, Output};
 use embassy_rp::peripherals;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_time::{Duration, Instant, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Timer, TICK_HZ, with_timeout};
 use mcp25xx::bitrates::clock_16mhz::CNF_1000K_BPS;
 use mcp25xx::registers::{CANINTE, OperationMode, RXB0CTRL, RXB1CTRL, RXM, CANSTAT, EFLG};
 use mcp25xx::{AcceptanceFilter, Config, IdHeader, MCP25xx};
@@ -94,6 +94,11 @@ struct OtaSession {
     next_offset: usize,
     requests_sent: u32,
     responses_received: u32,
+    chunks_written: u32,
+    start_tick: u64,
+    wait_started_tick: u64,
+    total_wait_ticks: u64,
+    total_write_ticks: u64,
     next_progress_log_at: usize,
     waiting_response: bool,
     response_deadline: Instant,
@@ -110,6 +115,11 @@ impl OtaSession {
             next_offset: 0,
             requests_sent: 0,
             responses_received: 0,
+            chunks_written: 0,
+            start_tick: 0,
+            wait_started_tick: 0,
+            total_wait_ticks: 0,
+            total_write_ticks: 0,
             next_progress_log_at: OTA_PROGRESS_LOG_STEP,
             waiting_response: false,
             response_deadline: Instant::now(),
@@ -134,25 +144,29 @@ impl OtaSession {
         self.active = true;
         self.server_node = server_node;
         self.path = path;
-        self.next_offset = 0;
-        self.requests_sent = 0;
-        self.responses_received = 0;
-        self.next_progress_log_at = OTA_PROGRESS_LOG_STEP;
-        self.waiting_response = false;
-        self.response_deadline = Instant::now();
-        self.response_timeouts = 0;
-        self.pending_response_payload = None;
+        self.reset_transfer_state(Instant::now().as_ticks());
         Ok(())
     }
 
     fn clear(&mut self) {
         self.active = false;
+        self.server_node = CanNodeId::MIN;
         self.path.clear();
+        self.reset_transfer_state(0);
+    }
+
+    fn reset_transfer_state(&mut self, start_tick: u64) {
         self.next_offset = 0;
         self.requests_sent = 0;
         self.responses_received = 0;
+        self.chunks_written = 0;
+        self.start_tick = start_tick;
+        self.wait_started_tick = 0;
+        self.total_wait_ticks = 0;
+        self.total_write_ticks = 0;
         self.next_progress_log_at = OTA_PROGRESS_LOG_STEP;
         self.waiting_response = false;
+        self.response_deadline = Instant::now();
         self.response_timeouts = 0;
         self.pending_response_payload = None;
     }
@@ -336,18 +350,24 @@ pub async fn can_handler(
         let updater_config = ota_updater_from_linkerfile(flash, flash);
         let mut ota_aligned = AlignedBuffer([0; 4]);
         let mut updater = FirmwareUpdater::new(updater_config, &mut ota_aligned.0);
-        match updater.get_state().await {
+        let mark_boot = match updater.get_state().await {
             Ok(State::Revert) => {
                 log::info!("boot state: revert, marking booted");
-                if let Err(err) = updater.mark_booted().await {
-                    log::warn!("boot state mark_booted failed: {:?}", err);
-                }
+                true
             }
             Ok(state) => {
                 log::info!("boot state: {:?}", state);
+                true
             }
             Err(err) => {
                 log::warn!("boot state read failed: {:?}", err);
+                false
+            }
+        };
+
+        if mark_boot {
+            if let Err(err) = updater.mark_booted().await {
+                log::warn!("boot state mark_booted failed: {:?}", err);
             }
         }
 
@@ -378,10 +398,10 @@ pub async fn can_handler(
                 // flush() at the bottom of the loop put frame-1 into TXB0.
                 // We need two more flush+wait cycles so frames 2 and 3 reach
                 // the bus before any long blocking operation.
-                let _ = node.node_mut().flush();
-                Timer::after_millis(100).await;
-                let _ = node.node_mut().flush();
-                Timer::after_millis(100).await;
+                for _ in 0..2 {
+                    let _ = node.node_mut().flush();
+                    Timer::after_millis(100).await;
+                }
 
                 if reset_mode == RESET_FACTORY {
                     let result = {
@@ -512,6 +532,24 @@ impl AppHandler {
         );
         self.ota.clear();
     }
+
+    fn accumulate_wait_ticks(&mut self, now_ticks: u64) {
+        if self.ota.wait_started_tick != 0 {
+            self.ota.total_wait_ticks = self
+                .ota
+                .total_wait_ticks
+                .saturating_add(now_ticks.saturating_sub(self.ota.wait_started_tick));
+        }
+        self.ota.wait_started_tick = 0;
+    }
+
+    fn ticks_to_ms(ticks: u64) -> u64 {
+        if TICK_HZ > 0 {
+            ticks.saturating_mul(1000) / TICK_HZ
+        } else {
+            0
+        }
+    }
 }
 
 impl TransferHandler<CanTransport> for AppHandler {
@@ -598,11 +636,6 @@ impl TransferHandler<CanTransport> for AppHandler {
             log::warn!("ota: file.read response too large");
             return true;
         }
-        log::info!(
-            "ota: rx file.read response tid={} payload={}B",
-            transfer.header.transfer_id.to_u8(),
-            transfer.payload.len()
-        );
         self.ota.pending_response_payload = Some(payload);
         true
     }
@@ -669,9 +702,10 @@ impl AppHandler {
 
         if self.ota.waiting_response {
             if let Some(payload) = self.ota.pending_response_payload.take() {
+                self.accumulate_wait_ticks(Instant::now().as_ticks());
                 self.ota.waiting_response = false;
                 self.ota.response_timeouts = 0;
-                self.ota.responses_received = self.ota.responses_received.wrapping_add(1);
+                self.ota.responses_received = self.ota.responses_received.saturating_add(1);
 
                 let response = match ReadResponse::deserialize_from_bytes(&payload) {
                     Ok(response) => response,
@@ -691,10 +725,16 @@ impl AppHandler {
                 let chunk = response.data.value;
                 let chunk_len = chunk.len();
                 if chunk_len > 0 {
+                    let write_start_tick = Instant::now().as_ticks();
                     if updater.write_firmware(self.ota.next_offset, &chunk).await.is_err() {
                         self.abort_ota("flash write failed");
                         return;
                     }
+                    self.ota.total_write_ticks = self
+                        .ota
+                        .total_write_ticks
+                        .saturating_add(Instant::now().as_ticks().saturating_sub(write_start_tick));
+                    self.ota.chunks_written = self.ota.chunks_written.saturating_add(1);
                     self.ota.next_offset += chunk_len;
                     if self.ota.next_offset >= self.ota.next_progress_log_at {
                         log::info!(
@@ -708,7 +748,57 @@ impl AppHandler {
                 }
 
                 if chunk_len < READ_CHUNK_SIZE {
-                    log::info!("ota: download complete bytes={}", self.ota.next_offset);
+                    let elapsed_ticks = Instant::now()
+                        .as_ticks()
+                        .saturating_sub(self.ota.start_tick);
+                    let elapsed_ms = Self::ticks_to_ms(elapsed_ticks);
+                    let effective_bitrate_bps = if elapsed_ticks > 0 {
+                        (self.ota.next_offset as u64)
+                            .saturating_mul(8)
+                            .saturating_mul(TICK_HZ)
+                            / elapsed_ticks
+                    } else {
+                        0
+                    };
+                    let effective_bitrate_kbps = effective_bitrate_bps / 1000;
+                    let wait_ms = Self::ticks_to_ms(self.ota.total_wait_ticks);
+                    let write_ms = Self::ticks_to_ms(self.ota.total_write_ticks);
+                    let other_ms = elapsed_ms.saturating_sub(wait_ms.saturating_add(write_ms));
+                    let wait_pct = if elapsed_ticks > 0 {
+                        self.ota.total_wait_ticks.saturating_mul(100) / elapsed_ticks
+                    } else {
+                        0
+                    };
+                    let write_pct = if elapsed_ticks > 0 {
+                        self.ota.total_write_ticks.saturating_mul(100) / elapsed_ticks
+                    } else {
+                        0
+                    };
+                    let avg_chunk_bytes = if self.ota.chunks_written > 0 {
+                        self.ota.next_offset / self.ota.chunks_written as usize
+                    } else {
+                        0
+                    };
+
+                    log::info!(
+                        "ota: transfer complete bytes={} time_ms={} bitrate={} bps ({} kbps) req={} resp={} chunks={} avg_chunk={}B",
+                        self.ota.next_offset,
+                        elapsed_ms,
+                        effective_bitrate_bps,
+                        effective_bitrate_kbps,
+                        self.ota.requests_sent,
+                        self.ota.responses_received,
+                        self.ota.chunks_written,
+                        avg_chunk_bytes
+                    );
+                    log::info!(
+                        "ota: timing breakdown wait_ms={} ({}%) write_ms={} ({}%) other_ms={}",
+                        wait_ms,
+                        wait_pct,
+                        write_ms,
+                        write_pct,
+                        other_ms
+                    );
                     match updater.mark_updated().await {
                         Ok(()) => {
                             log::info!("ota: marked updated, rebooting");
@@ -722,6 +812,7 @@ impl AppHandler {
                     }
                 }
             } else if Instant::now() >= self.ota.response_deadline {
+                self.accumulate_wait_ticks(Instant::now().as_ticks());
                 self.ota.waiting_response = false;
                 self.ota.response_timeouts = self.ota.response_timeouts.saturating_add(1);
                 if self.ota.response_timeouts > OTA_TIMEOUT_RETRY_LIMIT {
@@ -751,37 +842,16 @@ impl AppHandler {
             },
         };
         match node.send_request(read_service, &request, self.ota.server_node) {
-            Ok(transfer_id) => {
-                self.ota.requests_sent = self.ota.requests_sent.wrapping_add(1);
+            Ok(_) => {
+                self.ota.requests_sent = self.ota.requests_sent.saturating_add(1);
                 self.ota.waiting_response = true;
+                self.ota.wait_started_tick = Instant::now().as_ticks();
                 self.ota.response_deadline = Instant::now() + OTA_RESPONSE_TIMEOUT;
                 // Push request frames out immediately to minimize request/response latency.
                 let _ = node.node_mut().flush();
-                let attempt = self.ota.response_timeouts.saturating_add(1);
-                if attempt == 1 {
-                    log::info!(
-                        "ota: tx file.read request tid={} offset={} req#={} attempt=first",
-                        transfer_id.to_u8(),
-                        self.ota.next_offset,
-                        self.ota.requests_sent
-                    );
-                } else {
-                    log::info!(
-                        "ota: tx file.read request tid={} offset={} req#={} attempt=retry({}/{})",
-                        transfer_id.to_u8(),
-                        self.ota.next_offset,
-                        self.ota.requests_sent,
-                        self.ota.response_timeouts,
-                        OTA_TIMEOUT_RETRY_LIMIT
-                    );
-                }
             }
             Err(nb::Error::WouldBlock) => {
                 // Try again next loop.
-                log::info!(
-                    "ota: file.read request would block at offset={}, will retry",
-                    self.ota.next_offset
-                );
             }
             Err(nb::Error::Other(_)) => {
                 self.abort_ota("failed to send file.read request");

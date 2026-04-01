@@ -1,5 +1,4 @@
 use core::fmt::{Error as FmtError, Result as FmtResult, Write as FmtWrite};
-use core::usize;
 
 use embassy_usb::driver::EndpointError;
 use embedded_io_async::{ErrorKind, Write as AsyncWrite};

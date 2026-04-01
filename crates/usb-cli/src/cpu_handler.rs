@@ -65,19 +65,18 @@ impl CpuCommand {
         IO: AsyncWrite + FmtWrite + Send,
     {
         writeln!(io, "CPU{} Usage:", cpu).ok();
-        Timer::after_micros(100).await; // Yield to allow other tasks to run
-        writeln!(io, "  5s: {:.2}%", loads.load_5s).ok();
-        Timer::after_micros(100).await; // Yield to allow other tasks to run
-        writeln!(io, "  15s: {:.2}%", loads.load_15s).ok();
-        Timer::after_micros(100).await; // Yield to allow other tasks to run
-        writeln!(io, "  60s: {:.2}%", loads.load_60s).ok();
-        Timer::after_micros(100).await; // Yield to allow other tasks to run
-        writeln!(io, "  300s: {:.2}%", loads.load_300s).ok();
-        Timer::after_micros(100).await; // Yield to allow other tasks to run
-        writeln!(io, "  600s: {:.2}%", loads.load_600s).ok();
-        Timer::after_micros(100).await; // Yield to allow other tasks to run
-        writeln!(io, "  900s: {:.2}%", loads.load_900s).ok();
-        Timer::after_micros(100).await; // Yield to allow other tasks to run
+        let entries = [
+            ("5s", loads.load_5s),
+            ("15s", loads.load_15s),
+            ("60s", loads.load_60s),
+            ("300s", loads.load_300s),
+            ("600s", loads.load_600s),
+            ("900s", loads.load_900s),
+        ];
+        for (window, value) in entries {
+            writeln!(io, "  {}: {:.2}%", window, value).ok();
+            Timer::after_micros(100).await; // Yield to allow other tasks to run
+        }
 
     }
 

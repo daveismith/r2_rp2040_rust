@@ -31,7 +31,6 @@ pub struct TxBufferStatus {
     pub txerr: bool,
     pub mloa: bool,
     pub abtf: bool,
-    #[allow(dead_code)] // populated for diagnostics, may not always be logged
     pub txif: bool,
 }
 
@@ -105,13 +104,26 @@ impl<SPI: embedded_hal::spi::SpiDevice> Mcp25xxDriver<SPI> {
         })
     }
 
-    fn txb0_busy(&mut self) -> Option<bool> {
-        Some(self.controller.read_register::<TXB0CTRL>().ok()?.txreq())
+    fn txb0_busy(&mut self) -> bool {
+        self.controller
+            .read_register::<TXB0CTRL>()
+            .map(|r| r.txreq())
+            .unwrap_or(true)
     }
 
     fn clear_tx0if(&mut self) {
         // CANINTF: TX0IF is bit 2
         let _ = self.controller.modify_register(CANINTF::new(), 1 << 2);
+    }
+
+    fn tx_would_block<T>() -> nb::Result<T, core::convert::Infallible> {
+        CAN_TX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
+        Err(nb::Error::WouldBlock)
+    }
+
+    fn rx_would_block<T>() -> nb::Result<T, core::convert::Infallible> {
+        CAN_RX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
+        Err(nb::Error::WouldBlock)
     }
 
     fn convert_incoming(frame: mcp25xx::CanFrame, timestamp: Microseconds32) -> Option<Frame> {
@@ -140,29 +152,24 @@ where
     ) -> nb::Result<Option<Frame>, Self::Error> {
         CAN_TX_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
         let Some(extended_id) = ExtendedId::new(u32::from(frame.id())) else {
-            CAN_TX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-            return Err(nb::Error::WouldBlock);
+            return Self::tx_would_block();
         };
         let Some(driver_frame) = mcp25xx::CanFrame::new(extended_id, frame.data()) else {
-            CAN_TX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-            return Err(nb::Error::WouldBlock);
+            return Self::tx_would_block();
         };
 
-        if self.txb0_busy().unwrap_or(true) {
-            CAN_TX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-            return Err(nb::Error::WouldBlock);
+        if self.txb0_busy() {
+            return Self::tx_would_block();
         }
 
         // Clear stale completion flag before reusing TXB0.
         self.clear_tx0if();
 
         if self.controller.load_tx_buffer(TxBuffer::TXB0, &driver_frame).is_err() {
-            CAN_TX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-            return Err(nb::Error::WouldBlock);
+            return Self::tx_would_block();
         }
         if self.controller.request_to_send(TxBuffer::TXB0).is_err() {
-            CAN_TX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-            return Err(nb::Error::WouldBlock);
+            return Self::tx_would_block();
         }
 
         CAN_TX_OK.fetch_add(1, Ordering::Relaxed);
@@ -188,18 +195,11 @@ where
                     CAN_RX_OK.fetch_add(1, Ordering::Relaxed);
                     Ok(converted)
                 } else {
-                    CAN_RX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-                    Err(nb::Error::WouldBlock)
+                    Self::rx_would_block()
                 }
             }
-            Err(nb::Error::WouldBlock) => {
-                CAN_RX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-                Err(nb::Error::WouldBlock)
-            }
-            Err(nb::Error::Other(_)) => {
-                CAN_RX_WOULD_BLOCK.fetch_add(1, Ordering::Relaxed);
-                Err(nb::Error::WouldBlock)
-            }
+            Err(nb::Error::WouldBlock) => Self::rx_would_block(),
+            Err(nb::Error::Other(_)) => Self::rx_would_block(),
         }
     }
 

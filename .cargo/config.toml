@@ -16,6 +16,7 @@ target = "thumbv6m-none-eabi"
 #build-cyphal-template = ["build", "-p", "cyphal-template", "--target", "thumbv8m.main-none-eabihf"]
 #run-cyphal-template = ["run", "-p", "cyphal-template", "--bin", "cyphal-template", "--target", "thumbv8m.main-none-eabihf"]
 build-cyphal-template = ["build", "-p", "cyphal-template", "--target", "thumbv6m-none-eabi"]
+binary-cyphal-template = ["objcopy", "--release", "--bin", "cyphal-template", "--", "-O", "binary", "cyphal-template.bin"]
 run-cyphal-template = ["run", "-p", "cyphal-template", "--bin", "cyphal-template", "--target", "thumbv6m-none-eabi"]
 
 build-charge-bay = ["build", "-p", "charge-bay", "--target", "thumbv6m-none-eabi"]
