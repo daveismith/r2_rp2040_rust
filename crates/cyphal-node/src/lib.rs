@@ -39,7 +39,7 @@ pub mod node_task;
 #[cfg(feature = "mcp25xx")]
 pub use clock::TimerClock;
 pub use execute_command::{DefaultCommandHandler, PENDING_RESET, RESET_FACTORY, RESET_NONE, RESET_SOFT};
-pub use handler::{CyphalHandler, NoopHandler};
+pub use handler::{CyphalHandler, NodeExtension, NoopHandler};
 pub use node_info::NodeInfoConfig;
 pub use ota::OtaSession;
 pub use pnp::{pnp_unique_id_hash, PnpHandler};

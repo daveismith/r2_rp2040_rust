@@ -6,6 +6,7 @@
 //! (the LED-colour subject) is defined here.
 
 use canadensis::core::SubjectId;
+use canadensis::core::time::milliseconds;
 use canadensis::core::transfer::{MessageTransfer, ServiceTransfer};
 use canadensis::{ResponseToken, TransferHandler};
 use canadensis_can::CanTransport;
@@ -16,7 +17,7 @@ use embassy_rp::gpio::{Input, Output};
 use embassy_rp::peripherals;
 
 use cyphal_node::{
-    CyphalHandler, DefaultCommandHandler, NodeInfoConfig,
+    CyphalHandler, DefaultCommandHandler, NodeExtension, NodeInfoConfig,
     node_task::{FlashMutex, SpiBusMutex, run_cyphal_node},
 };
 
@@ -81,6 +82,18 @@ impl TransferHandler<CanTransport> for AppExtension {
         N: canadensis::Node<Transport = CanTransport>,
     {
         false
+    }
+}
+
+// ---- NodeExtension impl --------------------------------------------------
+
+impl NodeExtension for AppExtension {
+    fn register_subscriptions<N>(&self, node: &mut N) -> bool
+    where
+        N: canadensis::Node<Transport = CanTransport>,
+    {
+        node.subscribe_message(LED_COLOR_SUBJECT, 2, milliseconds(1_000))
+            .is_ok()
     }
 }
 

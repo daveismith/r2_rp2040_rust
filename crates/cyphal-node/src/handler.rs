@@ -157,3 +157,43 @@ impl<E: TransferHandler<CanTransport>> TransferHandler<CanTransport> for CyphalH
     }
 }
 
+// ---- Extension trait ------------------------------------------------------
+
+/// Trait for application-specific Cyphal extensions.
+///
+/// Combines [`TransferHandler<CanTransport>`] with the ability to register
+/// any message-subject subscriptions the extension needs.  Implementations
+/// must call [`canadensis::Node::subscribe_message`] for every subject they
+/// intend to handle in [`TransferHandler::handle_message`].
+///
+/// [`run_cyphal_node`][crate::node_task::run_cyphal_node] calls
+/// [`register_subscriptions`][NodeExtension::register_subscriptions] once
+/// after the node has been promoted to a named `BasicNode`.
+pub trait NodeExtension: TransferHandler<CanTransport> {
+    /// Subscribe to any message subjects this extension handles.
+    ///
+    /// Returns `true` on success, `false` if a subscription failed (e.g.
+    /// out of capacity).
+    fn register_subscriptions<N>(&self, node: &mut N) -> bool
+    where
+        N: canadensis::Node<Transport = CanTransport>;
+}
+
+impl NodeExtension for NoopHandler {
+    fn register_subscriptions<N>(&self, _node: &mut N) -> bool
+    where
+        N: canadensis::Node<Transport = CanTransport>,
+    {
+        true
+    }
+}
+
+impl<E: NodeExtension> NodeExtension for CyphalHandler<E> {
+    fn register_subscriptions<N>(&self, node: &mut N) -> bool
+    where
+        N: canadensis::Node<Transport = CanTransport>,
+    {
+        self.extension.register_subscriptions(node)
+    }
+}
+

@@ -80,7 +80,7 @@ use portable_atomic::{AtomicU8, Ordering};
 use crate::clock::TimerClock;
 use crate::driver::Mcp25xxDriver;
 use crate::execute_command::{PENDING_RESET, RESET_FACTORY, RESET_NONE, RESET_SOFT};
-use crate::handler::CyphalHandler;
+use crate::handler::{CyphalHandler, NodeExtension};
 use crate::ota::{
     OTA_PROGRESS_LOG_STEP, OTA_RESPONSE_TIMEOUT, OTA_TIMEOUT_RETRY_LIMIT, READ_CHUNK_SIZE,
     READ_RESPONSE_PAYLOAD_MAX,
@@ -425,7 +425,7 @@ pub async fn run_cyphal_node<T, E>(
 ) -> !
 where
     T: embassy_rp::spi::Instance,
-    E: TransferHandler<CanTransport>,
+    E: NodeExtension,
 {
     let spi = SpiDevice::new(spi_bus, cs);
     let mut mcp25xx = MCP25xx { spi };
@@ -562,6 +562,11 @@ where
     {
         log::warn!("can: subscribe_request execute_command failed");
         loop { Timer::after_secs(1).await; }
+    }
+
+    // ---- Extension subscriptions ------------------------------------------
+    if !handler.register_subscriptions(&mut node) {
+        log::warn!("can: extension register_subscriptions failed");
     }
 
     // ---- Phase 3: OTA setup -----------------------------------------------
