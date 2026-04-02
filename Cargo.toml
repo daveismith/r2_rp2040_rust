@@ -1,5 +1,4 @@
 [workspace]
-#members = ["boot/*", "boards/*", "crates/*", "apps/*"]
 members = ["boot/*", "crates/*", "apps/*"]
 resolver = "2"
 
