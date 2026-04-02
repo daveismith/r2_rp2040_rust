@@ -9,12 +9,13 @@ pub async fn cli_task(tx: UsbPipeWriter<'static>, rx: UsbPipeReader<'static>) {
     let bootload = usb_cli::Command::new("bootload", "Launch USB Bootloader", usb_cli::handlers::BootloadCommand);
     let cpu = usb_cli::Command::new("cpu", "Check CPU Usage", usb_cli::cpu_handler::CpuCommand);
     let restart = usb_cli::Command::new("restart", "Restart the system", usb_cli::handlers::RestartCommand);
+    let node_id = usb_cli::Command::new("node-id", "Show current Cyphal node ID", cli_commands::NodeIdCommand);
     
     //Specific 
     let uptime = usb_cli::Command::new("uptime", "Check uptime of the device", cli_commands::UptimeCommand);
 
     // Create the dispatcher with the registry.
-    let commands = &[version, echo, bootload, uptime, cpu, restart, ];
+    let commands = &[version, echo, bootload, uptime, node_id, cpu, restart, ];
 
     let prompt = "> ";
 

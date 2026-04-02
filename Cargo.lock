@@ -452,6 +452,7 @@ dependencies = [
  "canadensis_data_types",
  "cortex-m",
  "cortex-m-rt",
+ "crc-any",
  "defmt",
  "defmt-rtt",
  "embassy-boot-rp",

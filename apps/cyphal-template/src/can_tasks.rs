@@ -34,6 +34,7 @@ use canadensis_data_types::uavcan::node::execute_command_1_3::{
 };
 use canadensis_data_types::uavcan::node::health_1_0::Health;
 use canadensis_data_types::uavcan::node::mode_1_0::Mode;
+use canadensis_data_types::uavcan::pnp::node_id_allocation_data_1_0::{self as pnp_v1, NodeIDAllocationData as PnpMsg};
 use core::ops::Range;
 use portable_atomic::{AtomicU8, Ordering};
 
@@ -42,13 +43,15 @@ const MAX_REQUEST_SERVICES: usize = 4;
 const TX_QUEUE_SIZE: usize = 32;
 const RX_DRAIN_BUDGET: usize = 128;
 const LED_COLOR_SUBJECT: SubjectId = SubjectId::from_truncating(5999);
-const NODE_ID: u8 = 42;
 const EXECUTE_COMMAND_PAYLOAD_MAX: usize = 300;
 const READ_RESPONSE_PAYLOAD_MAX: usize = 300;
 const READ_CHUNK_SIZE: usize = 256;
 const OTA_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
 const OTA_TIMEOUT_RETRY_LIMIT: u8 = 8;
 const OTA_PROGRESS_LOG_STEP: usize = 16 * 1024;
+const PNP_POLL_TIMEOUT: Duration = Duration::from_millis(20);
+const PNP_RETRY_MIN_MS: u64 = 150;
+const PNP_RETRY_JITTER_MS: u64 = 850;
 const CAN_WAIT_TIMEOUT_IDLE: Duration = Duration::from_millis(20);
 const CAN_WAIT_TIMEOUT_OTA: Duration = Duration::from_millis(1);
 const LOOP_SLEEP_IDLE: Duration = Duration::from_millis(1);
@@ -59,6 +62,16 @@ const RESET_SOFT: u8 = 1;
 const RESET_FACTORY: u8 = 2;
 
 static PENDING_RESET: AtomicU8 = AtomicU8::new(RESET_NONE);
+static ASSIGNED_NODE_ID: AtomicU8 = AtomicU8::new(u8::MAX);
+
+pub fn assigned_node_id() -> Option<u8> {
+    let node_id = ASSIGNED_NODE_ID.load(Ordering::Acquire);
+    if node_id == u8::MAX {
+        None
+    } else {
+        Some(node_id)
+    }
+}
 
 type FlashPartition<'a> = Partition<'a, CriticalSectionRawMutex, FlashType>;
 
@@ -181,17 +194,87 @@ type SpiDeviceType = SpiDevice<
 
 type Driver = SingleQueueDriver<TimerClock, ArrayQueue<TX_QUEUE_SIZE>, Mcp25xxDriver<SpiDeviceType>>;
 
-type Node = BasicNode<
-    CoreNode<
-        TimerClock,
-        CanTransmitter<TimerClock, Driver>,
-        CanReceiver<TimerClock, Driver>,
-        CanTransferIdTracker,
-        Driver,
-        MAX_PUBLISH_TOPICS,
-        MAX_REQUEST_SERVICES,
-    >,
+type Core = CoreNode<
+    TimerClock,
+    CanTransmitter<TimerClock, Driver>,
+    CanReceiver<TimerClock, Driver>,
+    CanTransferIdTracker,
+    Driver,
+    MAX_PUBLISH_TOPICS,
+    MAX_REQUEST_SERVICES,
 >;
+
+type Node = BasicNode<Core>;
+
+/// Compute the CRC-64/WE hash of the 16-byte unique ID and keep the lowest 48 bits.
+/// This matches the canadensis implementation used by the server side.
+fn pnp_unique_id_hash(unique_id: &[u8; 16]) -> u64 {
+    use crc_any::CRCu64;
+    let mut crc = CRCu64::crc64we();
+    crc.digest(unique_id);
+    crc.get_crc() & 0x0000_ffff_ffff_ffff
+}
+
+fn pnp_request_retry_duration(unique_id: &[u8; 16], attempt: u32) -> Duration {
+    // A tiny deterministic mixer that gives a per-node jitter in the [min, min+jitter) range.
+    let mut state = u32::from_le_bytes([unique_id[0], unique_id[1], unique_id[2], unique_id[3]])
+        ^ u32::from_le_bytes([unique_id[4], unique_id[5], unique_id[6], unique_id[7]])
+        ^ attempt.wrapping_mul(0x9E37_79B9);
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    let jitter_ms = (state as u64) % PNP_RETRY_JITTER_MS;
+    Duration::from_millis(PNP_RETRY_MIN_MS + jitter_ms)
+}
+
+/// Receives PnP v1 allocation messages and records the first matching assigned node ID.
+struct PnpHandler {
+    unique_id_hash: u64,
+    /// Set when a matching allocation response arrives.
+    assigned_id: Option<CanNodeId>,
+}
+
+impl PnpHandler {
+    fn new(unique_id: &[u8; 16]) -> Self {
+        Self {
+            unique_id_hash: pnp_unique_id_hash(unique_id),
+            assigned_id: None,
+        }
+    }
+}
+
+impl TransferHandler<CanTransport> for PnpHandler {
+    fn handle_message<N>(
+        &mut self,
+        _node: &mut N,
+        transfer: &canadensis::core::transfer::MessageTransfer<alloc::vec::Vec<u8>, CanTransport>,
+    ) -> bool
+    where
+        N: canadensis::Node<Transport = CanTransport>,
+    {
+        if transfer.header.subject != pnp_v1::SUBJECT {
+            return false;
+        }
+        // Rule C: restart our timer on any allocation message (handled externally).
+        // Rule D: accept only non-anonymous sources that match our hash and carry a node ID.
+        if transfer.header.source.is_none() {
+            // Anonymous source means it's a request from another allocatee, not a response.
+            return true;
+        }
+        let Ok(msg) = PnpMsg::deserialize_from_bytes(&transfer.payload) else {
+            return true;
+        };
+        if msg.unique_id_hash != self.unique_id_hash {
+            return true;
+        }
+        if let Some(id_entry) = msg.allocated_node_id.iter().next() {
+            if let Ok(node_id) = CanNodeId::try_from(id_entry.value as u8) {
+                self.assigned_id = Some(node_id);
+            }
+        }
+        true
+    }
+}
 
 fn try_configure_mcp25xx(mcp25xx: &mut MCP25xx<SpiDeviceType>) -> bool {
     let Some(filter_addr) = embedded_can::ExtendedId::new(0) else {
@@ -293,22 +376,82 @@ pub async fn can_handler(
             certificate_of_authenticity: Default::default(),
         };
 
-        let node_id = match CanNodeId::try_from(NODE_ID) {
-            Ok(id) => id,
-            Err(_) => {
-                log::warn!("can: invalid node ID");
-                loop {
-                    Timer::after_secs(1).await;
-                }
-            }
-        };
-
         let clock = TimerClock;
         let transmitter = CanTransmitter::new(Mtu::Can8);
-        let receiver = CanReceiver::new(node_id);
+        let receiver = CanReceiver::new_anonymous();
         let driver = Mcp25xxDriver::new(mcp25xx);
         let queue_driver = SingleQueueDriver::new(ArrayQueue::new(), driver);
-        let core = CoreNode::new(clock, node_id, transmitter, receiver, queue_driver);
+        let mut core: Core = CoreNode::new_anonymous(clock, transmitter, receiver, queue_driver);
+
+        // Phase A: subscribe to allocation messages (budget = 9 bytes for the full response).
+        // Start publishing on the same subject; anonymous node, so these are anonymous transfers.
+        if core
+            .subscribe_message(pnp_v1::SUBJECT, 9, milliseconds(1_000))
+            .is_err()
+        {
+            log::warn!("can: pnp: subscribe_message failed");
+            loop {
+                Timer::after_secs(1).await;
+            }
+        }
+        if core
+            .start_publishing(pnp_v1::SUBJECT, milliseconds(1_000), canadensis::core::Priority::Nominal.into())
+            .is_err()
+        {
+            log::warn!("can: pnp: start_publishing failed");
+            loop {
+                Timer::after_secs(1).await;
+            }
+        }
+
+        let pnp_request = PnpMsg {
+            unique_id_hash: pnp_unique_id_hash(&unique_id),
+            allocated_node_id: heapless::Vec::new(), // empty = request, per spec
+        };
+        let mut pnp_handler = PnpHandler::new(&unique_id);
+        let mut pnp_requests_sent: u32 = 0;
+        let mut next_pnp_request_at = Instant::now();
+        log::info!("can: waiting for dynamic node ID allocation (pnp v1)");
+        let node_id = loop {
+            let _ = with_timeout(PNP_POLL_TIMEOUT, int.wait_for_low()).await;
+
+            for _ in 0..RX_DRAIN_BUDGET {
+                if core.receive(&mut pnp_handler).is_err() {
+                    break;
+                }
+            }
+
+            if let Some(id) = pnp_handler.assigned_id {
+                break id;
+            }
+
+            let now = Instant::now();
+            if now >= next_pnp_request_at {
+                match core.publish(pnp_v1::SUBJECT, &pnp_request) {
+                    Ok(()) => {
+                        pnp_requests_sent = pnp_requests_sent.wrapping_add(1);
+                        log::info!("can: pnp allocation request {} sent", pnp_requests_sent);
+                        let _ = core.flush();
+                    }
+                    Err(nb::Error::WouldBlock) => {
+                        // TX queue temporarily full; will retry at next interval.
+                    }
+                    Err(nb::Error::Other(err)) => {
+                        log::warn!("can: pnp allocation request failed: {:?}", err);
+                    }
+                }
+                next_pnp_request_at = now + pnp_request_retry_duration(&unique_id, pnp_requests_sent);
+            }
+
+            Timer::after(LOOP_SLEEP_IDLE).await;
+        };
+        log::info!("can: allocated node ID {} after {} request(s)", node_id.to_u8(), pnp_requests_sent);
+        ASSIGNED_NODE_ID.store(node_id.to_u8(), Ordering::Release);
+
+        // Promote the anonymous CoreNode to a named node before handing it to BasicNode.
+        use canadensis::Node as NodeTrait;
+        NodeTrait::set_node_id(&mut core, node_id);
+
         let mut node: Node = match BasicNode::new(core, node_info) {
             Ok(node) => node,
             Err(_) => {

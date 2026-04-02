@@ -22,7 +22,7 @@ async def test_get_info_responds(gi_client: pycyphal.presentation.Client) -> Non
     """GetInfo returns a response (not timeout)."""
     result = await gi_client.call(GI.Request())
     assert result is not None, (
-        "GetInfo timed out. Check that the node is running and has node ID 42."
+        "GetInfo timed out. Check that the node is running and has the expected allocated node ID."
     )
 
 

@@ -11,7 +11,7 @@ With non-default adapter or node:
     .venv/bin/pytest tests/hardware/ -v \\
         --can-iface slcan:/dev/cu.usbmodem1101 \\
         --can-bitrate 1000000 \\
-        --dut-node-id 42
+        --dut-node-id 23
 
 Skip destructive tests (reboot / factory-reset):
     .venv/bin/pytest tests/hardware/ -v -m "not destructive"
@@ -57,10 +57,12 @@ import pytest
 import pycyphal.application
 import pycyphal.transport.can
 import pycyphal.transport.can.media.pythoncan
+import uavcan.node.ID_1_0 as NodeId
 import uavcan.node
 import uavcan.node.ExecuteCommand_1_3 as EC
 import uavcan.node.GetInfo_1_0 as GI
 import uavcan.node.Heartbeat_1_0 as HB
+import uavcan.pnp.NodeIDAllocationData_1_0 as PnpAllocationData
 
 # ---------------------------------------------------------------------------
 # Custom markers
@@ -100,9 +102,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addoption(
         "--dut-node-id",
-        default=42,
+        default=23,
         type=int,
-        help="Cyphal node ID of the device under test (default: 42)",
+        help="Cyphal node ID of the device under test (default: 23)",
     )
     parser.addoption(
         "--local-node-id",
@@ -166,6 +168,100 @@ def ota_file_path(request: pytest.FixtureRequest) -> str:
 @pytest.fixture(scope="session")
 def ota_image_file(request: pytest.FixtureRequest) -> str:
     return request.config.getoption("--ota-image-file")  # type: ignore[return-value]
+
+
+class _PnpAllocator:
+    def __init__(self, node: pycyphal.application.Node, allocated_node_id: int) -> None:
+        self._node = node
+        self._allocated_node_id = allocated_node_id
+        self._sub: pycyphal.presentation.Subscriber | None = None
+        self._pub: pycyphal.presentation.Publisher | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._allocated: asyncio.Event = asyncio.Event()
+
+    async def start(self) -> None:
+        if self._task is not None:
+            return
+        self._allocated.clear()
+        self._sub = self._node.make_subscriber(PnpAllocationData)
+        self._pub = self._node.make_publisher(PnpAllocationData)
+        self._task = asyncio.create_task(self._run())
+
+    async def wait_allocated(self, timeout: float = 30.0) -> bool:
+        """Block until at least one allocation response has been sent, or timeout."""
+        try:
+            await asyncio.wait_for(asyncio.shield(self._allocated.wait()), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def stop(self) -> None:
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if self._sub is not None:
+            self._sub.close()
+            self._sub = None
+        if self._pub is not None:
+            self._pub.close()
+            self._pub = None
+
+    def reset(self) -> None:
+        self._allocated.clear()
+
+    async def _run(self) -> None:
+        assert self._sub is not None
+        assert self._pub is not None
+        while True:
+            result = await self._sub.receive_for(0.5)
+            if result is None:
+                continue
+
+            request, transfer = result
+            if transfer.source_node_id is not None:
+                continue
+
+            response = PnpAllocationData(  # pyright: ignore[reportCallIssue]
+                unique_id_hash=request.unique_id_hash,
+                allocated_node_id=[NodeId(value=self._allocated_node_id)],  # pyright: ignore[reportCallIssue]
+            )
+            await self._pub.publish(response)
+            self._allocated.set()
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def pnp_allocator(
+    test_node: pycyphal.application.Node, dut_node_id: int
+) -> AsyncIterator[_PnpAllocator]:
+    """
+    Runs a simple PnP v1 allocator for the test session.
+
+    The allocator maps any allocatee request hash to the configured DUT node ID.
+    """
+    allocator = _PnpAllocator(test_node, dut_node_id)
+    await allocator.start()
+    try:
+        yield allocator
+    finally:
+        await allocator.stop()
+
+
+@pytest.fixture(scope="module", autouse=True)
+async def ensure_dut_node_allocated(
+    test_node: pycyphal.application.Node,
+    dut_node_id: int,
+    pnp_allocator: _PnpAllocator,
+) -> None:
+    """Gate each hardware test module on successful PnP allocation and first heartbeat."""
+    allocated = await pnp_allocator.wait_allocated(timeout=30.0)
+    assert allocated, "PnP allocator did not respond within 30 seconds"
+
+    hb = await wait_for_heartbeat(test_node, dut_node_id, timeout=5.0)
+    assert hb is not None, f"No heartbeat from DUT node {dut_node_id} after PnP allocation"
 
 
 # ---------------------------------------------------------------------------

@@ -62,6 +62,7 @@ smart-leds = "0.4.0"
 canadensis = { version = "0.6.0" }
 canadensis_can = { version = "0.6.0" }
 canadensis_data_types = { version = "0.6.0" }
+crc-any = { version = "2", default-features = false }
 
 #canadensis = { git = "https://github.com/samcrow/canadensis.git", branch = "master" }
 #canadensis_can = { git = "https://github.com/samcrow/canadensis.git", branch = "master" }

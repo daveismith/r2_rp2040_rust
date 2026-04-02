@@ -20,7 +20,7 @@ import uavcan.node.ExecuteCommand_1_3 as EC
 import uavcan.node.GetInfo_1_0 as GI
 import uavcan.primitive.Unstructured_1_0 as Unstructured
 
-from .conftest import wait_for_heartbeat
+from .conftest import wait_for_heartbeat, _PnpAllocator
 
 
 # Per uavcan.file.Read semantics, non-full chunks indicate EOF.
@@ -39,6 +39,7 @@ async def test_begin_software_update_downloads_and_reboots(
     gi_client: pycyphal.presentation.Client,
     test_node: pycyphal.application.Node,
     dut_node_id: int,
+    pnp_allocator: _PnpAllocator
 ) -> None:
     """
     End-to-end OTA flow:
@@ -130,12 +131,18 @@ async def test_begin_software_update_downloads_and_reboots(
         assert wrong_path_requests == 0, (
             f"DUT requested unexpected file path {wrong_path_requests} time(s)"
         )
+        # Reset The Allocation
+        pnp_allocator.reset()
+        await pnp_allocator.wait_allocated(timeout=90.0)
 
-        hb = await wait_for_heartbeat(test_node, dut_node_id, timeout=45.0)
+
+        hb = await wait_for_heartbeat(test_node, dut_node_id, timeout=30.0)
         assert hb is not None, "DUT did not come back online after OTA reboot"
+
 
         info_result = await gi_client.call(GI.Request())
         assert info_result is not None, "GetInfo timed out after OTA reboot"
+        print("GetInfo response after OTA reboot: %s", info_result)
     finally:
         LOGGER.warning("Read server final stats: %s", read_server.sample_statistics())
         read_server.close()
