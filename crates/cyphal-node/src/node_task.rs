@@ -220,13 +220,13 @@ fn ota_updater_from_linkerfile<'a>(
     }
 
     let dfu = unsafe {
-        let start = &__bootloader_state_start as *const u32 as u32;
-        let end = &__bootloader_state_end as *const u32 as u32;
+        let start = &__bootloader_dfu_start as *const u32 as u32;
+        let end = &__bootloader_dfu_end as *const u32 as u32;
         Partition::new(dfu_flash, start, end - start)
     };
     let state = unsafe {
-        let start = &__bootloader_dfu_start as *const u32 as u32;
-        let end = &__bootloader_dfu_end as *const u32 as u32;
+        let start = &__bootloader_state_start as *const u32 as u32;
+        let end = &__bootloader_state_end as *const u32 as u32;
         Partition::new(state_flash, start, end - start)
     };
 
