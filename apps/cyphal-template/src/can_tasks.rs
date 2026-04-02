@@ -1,6 +1,6 @@
 use crate::can_driver::{Mcp25xxDriver, TimerClock};
-use crate::{built_info, identify_led};
 use crate::FlashMutex;
+use crate::{built_info, identify_led};
 use crate::{FlashType, SpiBusMutex, SpiBusType};
 use core::mem::size_of;
 use embassy_boot_rp::{AlignedBuffer, FirmwareUpdater, FirmwareUpdaterConfig, State};
@@ -9,22 +9,24 @@ use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_rp::gpio::{Input, Output};
 use embassy_rp::peripherals;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_time::{Duration, Instant, Timer, TICK_HZ, with_timeout};
+use embassy_time::{with_timeout, Duration, Instant, Timer, TICK_HZ};
 use mcp25xx::bitrates::clock_16mhz::CNF_1000K_BPS;
-use mcp25xx::registers::{CANINTE, OperationMode, RXB0CTRL, RXB1CTRL, RXM, CANSTAT, EFLG};
+use mcp25xx::registers::{OperationMode, CANINTE, CANSTAT, EFLG, RXB0CTRL, RXB1CTRL, RXM};
 use mcp25xx::{AcceptanceFilter, Config, IdHeader, MCP25xx};
 
-use canadensis::Node as _;
-use canadensis::core::SubjectId;
-use canadensis::core::Priority;
 use canadensis::core::time::milliseconds;
 use canadensis::core::transfer::{MessageTransfer, ServiceTransfer};
+use canadensis::core::Priority;
+use canadensis::core::SubjectId;
 use canadensis::encoding::Deserialize;
 use canadensis::node::data_types::{GetInfoResponse, Version};
 use canadensis::node::{BasicNode, CoreNode};
-use canadensis::{ResponseToken, ServiceToken, TransferHandler, nb};
+use canadensis::Node as _;
+use canadensis::{nb, ResponseToken, ServiceToken, TransferHandler};
 use canadensis_can::queue::{ArrayQueue, SingleQueueDriver};
-use canadensis_can::{CanNodeId, CanReceiver, CanTransferIdTracker, CanTransmitter, CanTransport, Mtu};
+use canadensis_can::{
+    CanNodeId, CanReceiver, CanTransferIdTracker, CanTransmitter, CanTransport, Mtu,
+};
 use canadensis_data_types::reg::udral::physics::optics::high_color_0_1::HighColor;
 use canadensis_data_types::uavcan::file::error_1_0::Error as FileError;
 use canadensis_data_types::uavcan::file::path_2_0::Path as FilePath;
@@ -34,7 +36,9 @@ use canadensis_data_types::uavcan::node::execute_command_1_3::{
 };
 use canadensis_data_types::uavcan::node::health_1_0::Health;
 use canadensis_data_types::uavcan::node::mode_1_0::Mode;
-use canadensis_data_types::uavcan::pnp::node_id_allocation_data_1_0::{self as pnp_v1, NodeIDAllocationData as PnpMsg};
+use canadensis_data_types::uavcan::pnp::node_id_allocation_data_1_0::{
+    self as pnp_v1, NodeIDAllocationData as PnpMsg,
+};
 use core::ops::Range;
 use portable_atomic::{AtomicU8, Ordering};
 
@@ -192,7 +196,8 @@ type SpiDeviceType = SpiDevice<
     Output<'static>,
 >;
 
-type Driver = SingleQueueDriver<TimerClock, ArrayQueue<TX_QUEUE_SIZE>, Mcp25xxDriver<SpiDeviceType>>;
+type Driver =
+    SingleQueueDriver<TimerClock, ArrayQueue<TX_QUEUE_SIZE>, Mcp25xxDriver<SpiDeviceType>>;
 
 type Core = CoreNode<
     TimerClock,
@@ -305,7 +310,10 @@ fn try_configure_mcp25xx(mcp25xx: &mut MCP25xx<SpiDeviceType>) -> bool {
         return false;
     }
 
-    let ints = CANINTE::default().with_rx0ie(true).with_rx1ie(true).with_tx0ie(true);
+    let ints = CANINTE::default()
+        .with_rx0ie(true)
+        .with_rx1ie(true)
+        .with_tx0ie(true);
     if mcp25xx.write_register(ints).is_err() {
         log::warn!("can: write_register failed");
         return false;
@@ -351,307 +359,333 @@ pub async fn can_handler(
         if let Ok(eflg) = mcp25xx.read_register::<EFLG>() {
             log::info!(
                 "can: EFLG txbo={} txep={} rxep={} txwar={} rxwar={}",
-                eflg.txbo(), eflg.txep(), eflg.rxep(), eflg.txwar(), eflg.rxwar()
+                eflg.txbo(),
+                eflg.txep(),
+                eflg.rxep(),
+                eflg.txwar(),
+                eflg.rxwar()
             );
         }
         break;
     }
 
-        let mut node_name = heapless::Vec::new();
-        if node_name.extend_from_slice(b"cyphal_template").is_err() {
-            log::warn!("can: failed to build node name");
-        }
+    let mut node_name = heapless::Vec::new();
+    if node_name
+        .extend_from_slice(built_info::PKG_NAME.as_bytes())
+        .is_err()
+    {
+        log::warn!("can: failed to build node name");
+    }
 
-        let software_major = u8::from_str_radix(built_info::PKG_VERSION_MAJOR, 10).unwrap_or(0);
-        let software_minor = u8::from_str_radix(built_info::PKG_VERSION_MINOR, 10).unwrap_or(0);
+    let software_major = u8::from_str_radix(built_info::PKG_VERSION_MAJOR, 10).unwrap_or(0);
+    let software_minor = u8::from_str_radix(built_info::PKG_VERSION_MINOR, 10).unwrap_or(0);
+    let software_vcs_revision_id = built_info::GIT_COMMIT_HASH_SHORT
+        .and_then(|hash| u64::from_str_radix(hash, 16).ok())
+        .unwrap_or(0);
 
-        let node_info = GetInfoResponse {
-            protocol_version: Version { major: 1, minor: 0 },
-            hardware_version: Version { major: 1, minor: 0 },
-            software_version: Version { major: software_major, minor: software_minor },
-            software_vcs_revision_id: 0,
-            unique_id,
-            name: node_name,
-            software_image_crc: Default::default(),
-            certificate_of_authenticity: Default::default(),
-        };
+    let node_info = GetInfoResponse {
+        protocol_version: Version { major: 1, minor: 0 },
+        hardware_version: Version { major: 1, minor: 0 },
+        software_version: Version {
+            major: software_major,
+            minor: software_minor,
+        },
+        software_vcs_revision_id,
+        unique_id,
+        name: node_name,
+        software_image_crc: Default::default(),
+        certificate_of_authenticity: Default::default(),
+    };
 
-        let clock = TimerClock;
-        let transmitter = CanTransmitter::new(Mtu::Can8);
-        let receiver = CanReceiver::new_anonymous();
-        let driver = Mcp25xxDriver::new(mcp25xx);
-        let queue_driver = SingleQueueDriver::new(ArrayQueue::new(), driver);
-        let mut core: Core = CoreNode::new_anonymous(clock, transmitter, receiver, queue_driver);
+    let clock = TimerClock;
+    let transmitter = CanTransmitter::new(Mtu::Can8);
+    let receiver = CanReceiver::new_anonymous();
+    let driver = Mcp25xxDriver::new(mcp25xx);
+    let queue_driver = SingleQueueDriver::new(ArrayQueue::new(), driver);
+    let mut core: Core = CoreNode::new_anonymous(clock, transmitter, receiver, queue_driver);
 
-        // Phase A: subscribe to allocation messages (budget = 9 bytes for the full response).
-        // Start publishing on the same subject; anonymous node, so these are anonymous transfers.
-        if core
-            .subscribe_message(pnp_v1::SUBJECT, 9, milliseconds(1_000))
-            .is_err()
-        {
-            log::warn!("can: pnp: subscribe_message failed");
-            loop {
-                Timer::after_secs(1).await;
-            }
-        }
-        if core
-            .start_publishing(pnp_v1::SUBJECT, milliseconds(1_000), canadensis::core::Priority::Nominal.into())
-            .is_err()
-        {
-            log::warn!("can: pnp: start_publishing failed");
-            loop {
-                Timer::after_secs(1).await;
-            }
-        }
-
-        let pnp_request = PnpMsg {
-            unique_id_hash: pnp_unique_id_hash(&unique_id),
-            allocated_node_id: heapless::Vec::new(), // empty = request, per spec
-        };
-        let mut pnp_handler = PnpHandler::new(&unique_id);
-        let mut pnp_requests_sent: u32 = 0;
-        let mut next_pnp_request_at = Instant::now();
-        log::info!("can: waiting for dynamic node ID allocation (pnp v1)");
-        let node_id = loop {
-            let _ = with_timeout(PNP_POLL_TIMEOUT, int.wait_for_low()).await;
-
-            for _ in 0..RX_DRAIN_BUDGET {
-                if core.receive(&mut pnp_handler).is_err() {
-                    break;
-                }
-            }
-
-            if let Some(id) = pnp_handler.assigned_id {
-                break id;
-            }
-
-            let now = Instant::now();
-            if now >= next_pnp_request_at {
-                match core.publish(pnp_v1::SUBJECT, &pnp_request) {
-                    Ok(()) => {
-                        pnp_requests_sent = pnp_requests_sent.wrapping_add(1);
-                        log::info!("can: pnp allocation request {} sent", pnp_requests_sent);
-                        let _ = core.flush();
-                    }
-                    Err(nb::Error::WouldBlock) => {
-                        // TX queue temporarily full; will retry at next interval.
-                    }
-                    Err(nb::Error::Other(err)) => {
-                        log::warn!("can: pnp allocation request failed: {:?}", err);
-                    }
-                }
-                next_pnp_request_at = now + pnp_request_retry_duration(&unique_id, pnp_requests_sent);
-            }
-
-            Timer::after(LOOP_SLEEP_IDLE).await;
-        };
-        log::info!("can: allocated node ID {} after {} request(s)", node_id.to_u8(), pnp_requests_sent);
-        ASSIGNED_NODE_ID.store(node_id.to_u8(), Ordering::Release);
-
-        // Promote the anonymous CoreNode to a named node before handing it to BasicNode.
-        use canadensis::Node as NodeTrait;
-        NodeTrait::set_node_id(&mut core, node_id);
-
-        let mut node: Node = match BasicNode::new(core, node_info) {
-            Ok(node) => node,
-            Err(_) => {
-                log::warn!("can: BasicNode init failed");
-                loop {
-                    Timer::after_secs(1).await;
-                }
-            }
-        };
-
-        node.set_health(Health {
-            value: Health::NOMINAL,
-        });
-
-        if node
-            .subscribe_request(
-                canadensis_data_types::uavcan::node::execute_command_1_3::SERVICE,
-                EXECUTE_COMMAND_PAYLOAD_MAX,
-                milliseconds(2_000),
-            )
-            .is_err()
-        {
-            log::warn!("can: subscribe_request execute_command failed");
-            loop {
-                Timer::after_secs(1).await;
-            }
-        }
-
-        if node
-            .subscribe_message(LED_COLOR_SUBJECT, size_of::<HighColor>(), milliseconds(10_000))
-            .is_err()
-        {
-            log::warn!("can: subscribe_message failed");
-            loop {
-                Timer::after_secs(1).await;
-            }
-        }
-
-        let updater_config = ota_updater_from_linkerfile(flash, flash);
-        let mut ota_aligned = AlignedBuffer([0; 4]);
-        let mut updater = FirmwareUpdater::new(updater_config, &mut ota_aligned.0);
-        let mark_boot = match updater.get_state().await {
-            Ok(State::Revert) => {
-                log::info!("boot state: revert, marking booted");
-                true
-            }
-            Ok(state) => {
-                log::info!("boot state: {:?}", state);
-                true
-            }
-            Err(err) => {
-                log::warn!("boot state read failed: {:?}", err);
-                false
-            }
-        };
-
-        if mark_boot {
-            if let Err(err) = updater.mark_booted().await {
-                log::warn!("boot state mark_booted failed: {:?}", err);
-            }
-        }
-
-        let read_service = match node.start_sending_requests::<ReadRequest>(
-            read_1_1::SERVICE,
-            milliseconds(2_000),
-            READ_RESPONSE_PAYLOAD_MAX,
-            Priority::Nominal,
-        ) {
-            Ok(token) => token,
-            Err(err) => {
-                log::warn!("can: start_sending_requests file.read failed: {:?}", err);
-                loop {
-                    Timer::after_secs(1).await;
-                }
-            }
-        };
-
-        log::info!("can: initialized");
-
-        let mut next_per_second = Instant::now() + Duration::from_secs(1);
-        let mut handler = AppHandler::new();
+    // Phase A: subscribe to allocation messages (budget = 9 bytes for the full response).
+    // Start publishing on the same subject; anonymous node, so these are anonymous transfers.
+    if core
+        .subscribe_message(pnp_v1::SUBJECT, 9, milliseconds(1_000))
+        .is_err()
+    {
+        log::warn!("can: pnp: subscribe_message failed");
         loop {
-            let reset_mode = PENDING_RESET.swap(RESET_NONE, Ordering::AcqRel);
-            if reset_mode != RESET_NONE {
-                // The ExecuteCommand response may span multiple CAN frames
-                // (e.g. "factory_reset" → 3 frames at 7 B/frame). The initial
-                // flush() at the bottom of the loop put frame-1 into TXB0.
-                // We need two more flush+wait cycles so frames 2 and 3 reach
-                // the bus before any long blocking operation.
-                for _ in 0..2 {
-                    let _ = node.node_mut().flush();
-                    Timer::after_millis(100).await;
-                }
+            Timer::after_secs(1).await;
+        }
+    }
+    if core
+        .start_publishing(
+            pnp_v1::SUBJECT,
+            milliseconds(1_000),
+            canadensis::core::Priority::Nominal.into(),
+        )
+        .is_err()
+    {
+        log::warn!("can: pnp: start_publishing failed");
+        loop {
+            Timer::after_secs(1).await;
+        }
+    }
 
-                if reset_mode == RESET_FACTORY {
-                    let result = {
-                        let mut flash = flash.lock().await;
-                        flash.blocking_erase(nvs_range.start, nvs_range.end)
-                    };
-                    if let Err(err) = result {
-                        log::error!("factory reset erase failed: {:?}", err);
-                    } else {
-                        log::info!("factory reset erased NVS region");
-                    }
-                }
+    let pnp_request = PnpMsg {
+        unique_id_hash: pnp_unique_id_hash(&unique_id),
+        allocated_node_id: heapless::Vec::new(), // empty = request, per spec
+    };
+    let mut pnp_handler = PnpHandler::new(&unique_id);
+    let mut pnp_requests_sent: u32 = 0;
+    let mut next_pnp_request_at = Instant::now();
+    log::info!("can: waiting for dynamic node ID allocation (pnp v1)");
+    let node_id = loop {
+        let _ = with_timeout(PNP_POLL_TIMEOUT, int.wait_for_low()).await;
 
+        for _ in 0..RX_DRAIN_BUDGET {
+            if core.receive(&mut pnp_handler).is_err() {
+                break;
+            }
+        }
+
+        if let Some(id) = pnp_handler.assigned_id {
+            break id;
+        }
+
+        let now = Instant::now();
+        if now >= next_pnp_request_at {
+            match core.publish(pnp_v1::SUBJECT, &pnp_request) {
+                Ok(()) => {
+                    pnp_requests_sent = pnp_requests_sent.wrapping_add(1);
+                    log::info!("can: pnp allocation request {} sent", pnp_requests_sent);
+                    let _ = core.flush();
+                }
+                Err(nb::Error::WouldBlock) => {
+                    // TX queue temporarily full; will retry at next interval.
+                }
+                Err(nb::Error::Other(err)) => {
+                    log::warn!("can: pnp allocation request failed: {:?}", err);
+                }
+            }
+            next_pnp_request_at = now + pnp_request_retry_duration(&unique_id, pnp_requests_sent);
+        }
+
+        Timer::after(LOOP_SLEEP_IDLE).await;
+    };
+    log::info!(
+        "can: allocated node ID {} after {} request(s)",
+        node_id.to_u8(),
+        pnp_requests_sent
+    );
+    ASSIGNED_NODE_ID.store(node_id.to_u8(), Ordering::Release);
+
+    // Promote the anonymous CoreNode to a named node before handing it to BasicNode.
+    use canadensis::Node as NodeTrait;
+    NodeTrait::set_node_id(&mut core, node_id);
+
+    let mut node: Node = match BasicNode::new(core, node_info) {
+        Ok(node) => node,
+        Err(_) => {
+            log::warn!("can: BasicNode init failed");
+            loop {
+                Timer::after_secs(1).await;
+            }
+        }
+    };
+
+    node.set_health(Health {
+        value: Health::NOMINAL,
+    });
+
+    if node
+        .subscribe_request(
+            canadensis_data_types::uavcan::node::execute_command_1_3::SERVICE,
+            EXECUTE_COMMAND_PAYLOAD_MAX,
+            milliseconds(2_000),
+        )
+        .is_err()
+    {
+        log::warn!("can: subscribe_request execute_command failed");
+        loop {
+            Timer::after_secs(1).await;
+        }
+    }
+
+    if node
+        .subscribe_message(
+            LED_COLOR_SUBJECT,
+            size_of::<HighColor>(),
+            milliseconds(10_000),
+        )
+        .is_err()
+    {
+        log::warn!("can: subscribe_message failed");
+        loop {
+            Timer::after_secs(1).await;
+        }
+    }
+
+    let updater_config = ota_updater_from_linkerfile(flash, flash);
+    let mut ota_aligned = AlignedBuffer([0; 4]);
+    let mut updater = FirmwareUpdater::new(updater_config, &mut ota_aligned.0);
+    let mark_boot = match updater.get_state().await {
+        Ok(State::Revert) => {
+            log::info!("boot state: revert, marking booted");
+            true
+        }
+        Ok(state) => {
+            log::info!("boot state: {:?}", state);
+            true
+        }
+        Err(err) => {
+            log::warn!("boot state read failed: {:?}", err);
+            false
+        }
+    };
+
+    if mark_boot {
+        if let Err(err) = updater.mark_booted().await {
+            log::warn!("boot state mark_booted failed: {:?}", err);
+        }
+    }
+
+    let read_service = match node.start_sending_requests::<ReadRequest>(
+        read_1_1::SERVICE,
+        milliseconds(2_000),
+        READ_RESPONSE_PAYLOAD_MAX,
+        Priority::Nominal,
+    ) {
+        Ok(token) => token,
+        Err(err) => {
+            log::warn!("can: start_sending_requests file.read failed: {:?}", err);
+            loop {
+                Timer::after_secs(1).await;
+            }
+        }
+    };
+
+    log::info!("can: initialized");
+
+    let mut next_per_second = Instant::now() + Duration::from_secs(1);
+    let mut handler = AppHandler::new();
+    loop {
+        let reset_mode = PENDING_RESET.swap(RESET_NONE, Ordering::AcqRel);
+        if reset_mode != RESET_NONE {
+            // The ExecuteCommand response may span multiple CAN frames
+            // (e.g. "factory_reset" → 3 frames at 7 B/frame). The initial
+            // flush() at the bottom of the loop put frame-1 into TXB0.
+            // We need two more flush+wait cycles so frames 2 and 3 reach
+            // the bus before any long blocking operation.
+            for _ in 0..2 {
                 let _ = node.node_mut().flush();
                 Timer::after_millis(100).await;
-                cortex_m::peripheral::SCB::sys_reset();
             }
 
-            // Wait for CAN activity, but always wake periodically so time-based Cyphal
-            // maintenance (heartbeat, transfers) runs even if INT behavior is noisy.
-            // Use shorter waits during OTA to reduce request-to-request latency.
-            let can_wait_timeout = if handler.ota.active {
-                CAN_WAIT_TIMEOUT_OTA
-            } else {
-                CAN_WAIT_TIMEOUT_IDLE
-            };
-            let _ = with_timeout(can_wait_timeout, int.wait_for_low()).await;
-
-            let now = Instant::now();
-            while now >= next_per_second {
-                let _ = node.run_per_second_tasks();
-                // Read EFLG/CANSTAT to detect bus-off or error states.
-                if let Some(status) = node.node_mut().driver_mut().driver_mut().read_status()
-                {
-                    if status.txbo {
-                        log::warn!("can: BUS-OFF! Frames not sent. Check bitrate (16MHz crystal?) and termination.");
-                    } else if status.txep || status.rxep {
-                        log::warn!(
-                            "can: error-passive txep={} rxep={} tec={} rec={} tx0if={}",
-                            status.txep,
-                            status.rxep,
-                            status.tec,
-                            status.rec,
-                            status.tx0if,
-                        );
-                    } else if status.txwar || status.rxwar {
-                        log::warn!(
-                            "can: error-warning txwar={} rxwar={} tec={} rec={} tx0if={}",
-                            status.txwar,
-                            status.rxwar,
-                            status.tec,
-                            status.rec,
-                            status.tx0if,
-                        );
-                    }
-
-                    if status.txbo || status.txep || status.txwar {
-                        log::warn!(
-                            "can: txb0 req={} err={} mloa={} abtf={} txif={}",
-                            status.txb0.txreq,
-                            status.txb0.txerr,
-                            status.txb0.mloa,
-                            status.txb0.abtf,
-                            status.txb0.txif,
-                        );
-                        if status.txb0.txreq {
-                            let recovered = node
-                                .node_mut()
-                                .driver_mut()
-                                .driver_mut()
-                                .abort_pending_transmissions();
-                            log::warn!("can: abort pending tx buffers recovered={}", recovered);
-                        }
-                    }
+            if reset_mode == RESET_FACTORY {
+                let result = {
+                    let mut flash = flash.lock().await;
+                    flash.blocking_erase(nvs_range.start, nvs_range.end)
+                };
+                if let Err(err) = result {
+                    log::error!("factory reset erase failed: {:?}", err);
+                } else {
+                    log::info!("factory reset erased NVS region");
                 }
-                next_per_second += Duration::from_secs(1);
-            }
-
-            // Drain more frames per turn so large multi-frame service transfers
-            // (e.g. file.Read responses during OTA) don't overflow MCP25xx RX buffers.
-            for _ in 0..RX_DRAIN_BUDGET {
-                if node.receive(&mut handler).is_err() {
-                    break;
-                }
-            }
-
-            handler.drive_ota(&mut node, &read_service, &mut updater).await;
-            if handler.ota.active {
-                node.set_mode(Mode {
-                    value: Mode::SOFTWARE_UPDATE,
-                });
-            } else {
-                node.set_mode(Mode {
-                    value: Mode::OPERATIONAL,
-                });
             }
 
             let _ = node.node_mut().flush();
-
-            // Ensure cooperative scheduling even when INT is held low.
-            let loop_sleep = if handler.ota.active {
-                LOOP_SLEEP_OTA
-            } else {
-                LOOP_SLEEP_IDLE
-            };
-            Timer::after(loop_sleep).await;
+            Timer::after_millis(100).await;
+            cortex_m::peripheral::SCB::sys_reset();
         }
+
+        // Wait for CAN activity, but always wake periodically so time-based Cyphal
+        // maintenance (heartbeat, transfers) runs even if INT behavior is noisy.
+        // Use shorter waits during OTA to reduce request-to-request latency.
+        let can_wait_timeout = if handler.ota.active {
+            CAN_WAIT_TIMEOUT_OTA
+        } else {
+            CAN_WAIT_TIMEOUT_IDLE
+        };
+        let _ = with_timeout(can_wait_timeout, int.wait_for_low()).await;
+
+        let now = Instant::now();
+        while now >= next_per_second {
+            let _ = node.run_per_second_tasks();
+            // Read EFLG/CANSTAT to detect bus-off or error states.
+            if let Some(status) = node.node_mut().driver_mut().driver_mut().read_status() {
+                if status.txbo {
+                    log::warn!("can: BUS-OFF! Frames not sent. Check bitrate (16MHz crystal?) and termination.");
+                } else if status.txep || status.rxep {
+                    log::warn!(
+                        "can: error-passive txep={} rxep={} tec={} rec={} tx0if={}",
+                        status.txep,
+                        status.rxep,
+                        status.tec,
+                        status.rec,
+                        status.tx0if,
+                    );
+                } else if status.txwar || status.rxwar {
+                    log::warn!(
+                        "can: error-warning txwar={} rxwar={} tec={} rec={} tx0if={}",
+                        status.txwar,
+                        status.rxwar,
+                        status.tec,
+                        status.rec,
+                        status.tx0if,
+                    );
+                }
+
+                if status.txbo || status.txep || status.txwar {
+                    log::warn!(
+                        "can: txb0 req={} err={} mloa={} abtf={} txif={}",
+                        status.txb0.txreq,
+                        status.txb0.txerr,
+                        status.txb0.mloa,
+                        status.txb0.abtf,
+                        status.txb0.txif,
+                    );
+                    if status.txb0.txreq {
+                        let recovered = node
+                            .node_mut()
+                            .driver_mut()
+                            .driver_mut()
+                            .abort_pending_transmissions();
+                        log::warn!("can: abort pending tx buffers recovered={}", recovered);
+                    }
+                }
+            }
+            next_per_second += Duration::from_secs(1);
+        }
+
+        // Drain more frames per turn so large multi-frame service transfers
+        // (e.g. file.Read responses during OTA) don't overflow MCP25xx RX buffers.
+        for _ in 0..RX_DRAIN_BUDGET {
+            if node.receive(&mut handler).is_err() {
+                break;
+            }
+        }
+
+        handler
+            .drive_ota(&mut node, &read_service, &mut updater)
+            .await;
+        if handler.ota.active {
+            node.set_mode(Mode {
+                value: Mode::SOFTWARE_UPDATE,
+            });
+        } else {
+            node.set_mode(Mode {
+                value: Mode::OPERATIONAL,
+            });
+        }
+
+        let _ = node.node_mut().flush();
+
+        // Ensure cooperative scheduling even when INT is held low.
+        let loop_sleep = if handler.ota.active {
+            LOOP_SLEEP_OTA
+        } else {
+            LOOP_SLEEP_IDLE
+        };
+        Timer::after(loop_sleep).await;
+    }
 }
 
 struct AppHandler {
@@ -730,17 +764,20 @@ impl TransferHandler<CanTransport> for AppHandler {
     where
         N: canadensis::Node<Transport = CanTransport>,
     {
-        if transfer.header.service != canadensis_data_types::uavcan::node::execute_command_1_3::SERVICE {
+        if transfer.header.service
+            != canadensis_data_types::uavcan::node::execute_command_1_3::SERVICE
+        {
             return false;
         }
 
-        let (status, output) = match ExecuteCommandRequest::deserialize_from_bytes(&transfer.payload) {
-            Ok(request) => self.handle_execute_command(&request, transfer.header.source),
-            Err(_) => (
-                ExecuteCommandResponse::STATUS_BAD_PARAMETER,
-                b"invalid request".as_slice(),
-            ),
-        };
+        let (status, output) =
+            match ExecuteCommandRequest::deserialize_from_bytes(&transfer.payload) {
+                Ok(request) => self.handle_execute_command(&request, transfer.header.source),
+                Err(_) => (
+                    ExecuteCommandResponse::STATUS_BAD_PARAMETER,
+                    b"invalid request".as_slice(),
+                ),
+            };
 
         let mut response_output = heapless::Vec::<u8, 46>::new();
         let _ = response_output.extend_from_slice(output);
@@ -818,7 +855,8 @@ impl AppHandler {
                         (ExecuteCommandResponse::STATUS_BAD_PARAMETER, b"bad path")
                     } else {
                         let path_len = request.parameter.len();
-                        let path_preview = core::str::from_utf8(&request.parameter).unwrap_or("<non-utf8-path>");
+                        let path_preview =
+                            core::str::from_utf8(&request.parameter).unwrap_or("<non-utf8-path>");
                         log::info!(
                             "ota begin: server={} path_len={} path='{}'",
                             source_node.to_u8(),
@@ -869,7 +907,11 @@ impl AppHandler {
                 let chunk_len = chunk.len();
                 if chunk_len > 0 {
                     let write_start_tick = Instant::now().as_ticks();
-                    if updater.write_firmware(self.ota.next_offset, &chunk).await.is_err() {
+                    if updater
+                        .write_firmware(self.ota.next_offset, &chunk)
+                        .await
+                        .is_err()
+                    {
                         self.abort_ota("flash write failed");
                         return;
                     }

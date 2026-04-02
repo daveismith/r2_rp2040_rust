@@ -110,7 +110,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--local-node-id",
         default=10,
         type=int,
-        help="Cyphal node ID used by the test harness (default: 247)",
+        help="Cyphal node ID used by the test harness (default: 10)",
     )
     parser.addoption(
         "--run-ota",

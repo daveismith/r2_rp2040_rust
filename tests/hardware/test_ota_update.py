@@ -142,7 +142,6 @@ async def test_begin_software_update_downloads_and_reboots(
 
         info_result = await gi_client.call(GI.Request())
         assert info_result is not None, "GetInfo timed out after OTA reboot"
-        print("GetInfo response after OTA reboot: %s", info_result)
     finally:
         LOGGER.warning("Read server final stats: %s", read_server.sample_statistics())
         read_server.close()

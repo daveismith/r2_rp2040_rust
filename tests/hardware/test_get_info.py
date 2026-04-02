@@ -27,16 +27,16 @@ async def test_get_info_responds(gi_client: pycyphal.presentation.Client) -> Non
 
 
 async def test_get_info_node_name(gi_client: pycyphal.presentation.Client) -> None:
-    """Node name is 'cyphal_template'."""
+    """Node name is 'cyphal-template'."""
     result = await gi_client.call(GI.Request())
     assert result is not None, "GetInfo timed out"
     response, _ = result
     name = bytes(response.name).decode("ascii")  # type: ignore[attr-defined]
-    assert name == "cyphal_template", f"Unexpected node name: {name!r}"
+    assert name == "cyphal-template", f"Unexpected node name: {name!r}"
 
 
 async def test_get_info_software_version(gi_client: pycyphal.presentation.Client) -> None:
-    """Software version is 0.1."""
+    """Software version is 0.3."""
     result = await gi_client.call(GI.Request())
     assert result is not None, "GetInfo timed out"
     response, _ = result

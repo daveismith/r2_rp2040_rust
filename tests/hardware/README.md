@@ -113,8 +113,8 @@ software update, serves the image blocks, then verifies the DUT reboots.
 | Test | Description |
 |------|-------------|
 | `test_get_info_responds` | GetInfo returns a response (no timeout) |
-| `test_get_info_node_name` | Node name is `"cyphal_template"` |
-| `test_get_info_software_version` | Software version is `0.1` |
+| `test_get_info_node_name` | Node name is `"cyphal-template"` |
+| `test_get_info_software_version` | Software version is `0.4` |
 | `test_get_info_unique_id` | Unique-ID is 16 bytes, non-zero |
 | `test_get_info_protocol_version` | Protocol version major is `1` |
 
