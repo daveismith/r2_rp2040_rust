@@ -331,7 +331,7 @@ dependencies = [
  "mcp25xx",
  "panic-probe",
  "portable-atomic",
- "sequential-storage 7.1.0",
+ "sequential-storage 7.2.0",
  "static_cell",
  "usb-cli",
  "usb-serial",
@@ -442,8 +442,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "cyphal-node"
+version = "0.1.0"
+dependencies = [
+ "canadensis",
+ "canadensis_can",
+ "canadensis_data_types",
+ "cortex-m",
+ "crc-any",
+ "embassy-boot-rp",
+ "embassy-embedded-hal",
+ "embassy-rp 0.8.0",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-can",
+ "embedded-hal 1.0.0",
+ "heapless 0.9.2",
+ "log",
+ "mcp25xx",
+ "portable-atomic",
+]
+
+[[package]]
 name = "cyphal-template"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "built",
@@ -452,7 +474,7 @@ dependencies = [
  "canadensis_data_types",
  "cortex-m",
  "cortex-m-rt",
- "crc-any",
+ "cyphal-node",
  "defmt",
  "defmt-rtt",
  "embassy-boot-rp",
@@ -465,12 +487,10 @@ dependencies = [
  "embassy-usb",
  "embassy-usb-logger",
  "embedded-alloc 0.7.0",
- "embedded-can",
  "embedded-hal 1.0.0",
  "embedded-io-async 0.6.1",
  "heapless 0.9.2",
  "log",
- "mcp25xx",
  "panic-probe",
  "portable-atomic",
  "smart-leds",
@@ -2026,9 +2046,9 @@ dependencies = [
 
 [[package]]
 name = "sequential-storage"
-version = "7.1.0"
+version = "7.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4580ee0fa08cd41bee9f5b50ed309877e18735370fd4eef5766cc82863ef772"
+checksum = "574e5a379bf43653079b34cb4cf32958404b5f42e0ed5b5adcdff02c2de04d4d"
 dependencies = [
  "embedded-storage-async",
 ]

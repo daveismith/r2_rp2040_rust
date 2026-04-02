@@ -34,6 +34,8 @@ build-canbus = ["build", "-p", "canbus"]
 build-config = ["build", "-p", "config"]
 build-usb-cli = ["build", "-p", "usb-cli"]
 build-usb-serial = ["build", "-p", "usb-serial"]
+check-cyphal-node = ["check", "-p", "cyphal-node", "--target", "thumbv6m-none-eabi"]
+test-cyphal-node = ["test", "-p", "cyphal-node", "--target", "x86_64-unknown-linux-gnu", "--no-default-features"]
 
 # [unstable]
 # nicer workspace inheritance for lints/dep overrides (optional)

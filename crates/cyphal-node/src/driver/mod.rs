@@ -1,61 +1,89 @@
+//! MCP25625 / MCP2515 CAN transceiver driver for the Cyphal stack.
+//!
+//! Wraps [`mcp25xx::MCP25xx`] to implement the `canadensis_can` transmit and
+//! receive driver traits, enabling the Cyphal stack to use the hardware CAN
+//! controller over SPI.
+
 use canadensis::core::OutOfMemoryError;
 use canadensis::core::subscription::Subscription;
-use canadensis::core::time::{Clock, Microseconds32};
+use canadensis::core::time::Microseconds32;
 use canadensis::nb;
 use canadensis_can::driver::{ReceiveDriver, TransmitDriver};
 use canadensis_can::{CanId, CanNodeId, Frame};
-use embassy_time::Instant;
-use embedded_can::nb::Can;
 use embedded_can::{ExtendedId, Frame as _};
 use mcp25xx::registers::{CANCTRL, CANINTF, EFLG, REC, TEC, TXB0CTRL};
 use mcp25xx::{MCP25xx, TxBuffer};
+use embedded_can::nb::Can as EmbeddedNbCan;
 use portable_atomic::{AtomicU32, Ordering};
 
+use crate::clock::TimerClock;
+
+/// Total number of CAN frame transmit attempts.
 pub static CAN_TX_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+/// Number of frames successfully placed in the TX buffer.
 pub static CAN_TX_OK: AtomicU32 = AtomicU32::new(0);
+/// Number of transmit attempts that would have blocked (TX buffer busy).
 pub static CAN_TX_WOULD_BLOCK: AtomicU32 = AtomicU32::new(0);
+/// Number of frames successfully received.
 pub static CAN_RX_OK: AtomicU32 = AtomicU32::new(0);
+/// Number of receive attempts that returned WouldBlock (no frame available).
 pub static CAN_RX_WOULD_BLOCK: AtomicU32 = AtomicU32::new(0);
 
-pub struct TimerClock;
-
-impl Clock for TimerClock {
-    fn now(&mut self) -> Microseconds32 {
-        Microseconds32::from_ticks(Instant::now().as_micros() as u32)
-    }
-}
-
+/// Snapshot of the MCP25xx error and interrupt flag registers.
 #[derive(Clone, Copy, Debug)]
 pub struct TxBufferStatus {
+    /// Transmit-request pending.
     pub txreq: bool,
+    /// TX error detected.
     pub txerr: bool,
+    /// Message lost arbitration.
     pub mloa: bool,
+    /// Transmission aborted.
     pub abtf: bool,
+    /// TX0 interrupt flag.
     pub txif: bool,
 }
 
+/// Combined CAN controller status snapshot (EFLG + CANINTF + TXB0CTRL).
 #[derive(Clone, Copy, Debug)]
 pub struct ControllerStatus {
+    /// Bus-off state (error count saturated).
     pub txbo: bool,
+    /// TX error-passive.
     pub txep: bool,
+    /// RX error-passive.
     pub rxep: bool,
+    /// TX error warning threshold reached.
     pub txwar: bool,
+    /// RX error warning threshold reached.
     pub rxwar: bool,
+    /// TX error counter.
     pub tec: u8,
+    /// RX error counter.
     pub rec: u8,
+    /// Status of TX buffer 0.
     pub txb0: TxBufferStatus,
+    /// TX0 interrupt flag (copy from CANINTF).
     pub tx0if: bool,
 }
 
+/// Driver wrapper that adapts [`MCP25xx`] to the `canadensis_can` driver traits.
+///
+/// Implements both [`TransmitDriver`] and [`ReceiveDriver`] for use with the
+/// Cyphal stack's [`canadensis_can::queue::SingleQueueDriver`].
 pub struct Mcp25xxDriver<SPI: embedded_hal::spi::SpiDevice> {
     controller: MCP25xx<SPI>,
 }
 
 impl<SPI: embedded_hal::spi::SpiDevice> Mcp25xxDriver<SPI> {
+    /// Create a new driver wrapping the given MCP25xx instance.
     pub fn new(controller: MCP25xx<SPI>) -> Self {
         Self { controller }
     }
 
+    /// Read a combined status snapshot from the controller registers.
+    ///
+    /// Returns `None` if any SPI register read fails.
     pub fn read_status(&mut self) -> Option<ControllerStatus> {
         let eflg = self.controller.read_register::<EFLG>().ok()?;
         let tec = self.controller.read_register::<TEC>().ok()?.0;
@@ -74,6 +102,9 @@ impl<SPI: embedded_hal::spi::SpiDevice> Mcp25xxDriver<SPI> {
         })
     }
 
+    /// Abort any pending transmission in TX buffer 0 and clear error flags.
+    ///
+    /// Returns `true` if all register operations succeeded.
     pub fn abort_pending_transmissions(&mut self) -> bool {
         if self
             .controller
@@ -188,8 +219,9 @@ where
     type Error = core::convert::Infallible;
 
     fn receive(&mut self, clock: &mut TimerClock) -> nb::Result<Frame, Self::Error> {
+        use canadensis::core::time::Clock;
         let now = clock.now();
-        match self.controller.receive() {
+        match EmbeddedNbCan::receive(&mut self.controller) {
             Ok(frame) => {
                 if let Some(converted) = Self::convert_incoming(frame, now) {
                     CAN_RX_OK.fetch_add(1, Ordering::Relaxed);

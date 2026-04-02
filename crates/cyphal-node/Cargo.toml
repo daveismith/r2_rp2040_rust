@@ -1,0 +1,61 @@
+[package]
+name = "cyphal-node"
+version = "0.1.0"
+edition = "2021"
+authors = ["David Smith <1734595+daveismith@users.noreply.github.com>"]
+license = "MIT or Apache-2.0"
+description = "Reusable Cyphal/UAVCAN node library for RP2040/Embassy projects"
+
+[features]
+## Default feature set — enables the MCP25xx CAN driver and hardware task.
+default = ["mcp25xx"]
+
+## Enable the MCP25625/MCP2515 CAN transceiver driver and the concrete
+## `run_cyphal_node` async function with RP2040 GPIO / SPI / Flash types.
+mcp25xx = [
+    "dep:mcp25xx",
+    "dep:embassy-rp",
+    "dep:embassy-embedded-hal",
+    "dep:embedded-hal",
+    "dep:cortex-m",
+    "dep:embassy-boot-rp",
+]
+
+## Enable `defmt` formatting in log macros (pass-through feature flag for
+## downstream crates that gate their own defmt imports on this feature).
+defmt = []
+
+[dependencies]
+# Cyphal / UAVCAN stack
+canadensis           = { version = "0.6.0" }
+canadensis_can       = { version = "0.6.0" }
+canadensis_data_types = { version = "0.6.0" }
+
+# CRC-64/WE for PnP unique-ID hash
+crc-any = { version = "2", default-features = false }
+
+# Embassy async runtime helpers
+embassy-time     = { version = "0.5.0" }
+embassy-boot-rp  = { version = "0.8.0", optional = true }
+embassy-sync     = { version = "0.7.0" }
+
+# CAN / embedded traits always needed
+embedded-can = { version = "0.4.1" }
+
+# Utilities
+heapless         = { version = "0.9.2" }
+portable-atomic  = { version = "1.11.1", features = ["critical-section"] }
+log              = { version = "0.4.27", features = ["max_level_info"] }
+cortex-m         = { version = "0.7.7", features = ["inline-asm"], optional = true }
+
+# ---------- optional: mcp25xx feature ----------
+mcp25xx          = { version = "0.4.0", features = ["mcp25625"], optional = true }
+embassy-rp       = { version = "0.8.0", features = [
+    "defmt",
+    "unstable-pac",
+    "time-driver",
+    "critical-section-impl",
+    "rp2040",
+], optional = true }
+embassy-embedded-hal = { version = "0.5.0", optional = true }
+embedded-hal         = { version = "1.0", optional = true }
