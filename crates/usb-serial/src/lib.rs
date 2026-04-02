@@ -8,6 +8,7 @@
 // for the basis of this file.
 
 use embassy_futures::join::join4;
+use embassy_futures::yield_now;
 use embassy_rp::{bind_interrupts, Peri};
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::InterruptHandler;
@@ -88,26 +89,47 @@ pub async fn usb_handler(usb: Peri<'static, USB>,
     let log_fut = embassy_usb_logger::with_class!(1024, log::LevelFilter::Info, logger_class);
     
     // Set Up Handling for Serial
-    let (mut send, mut recv) = serial.split();        
+    let (mut send, mut recv) = serial.split();  
     
     // Reader function, pull packets from the interface as they come in and publish them into the rx pub/sub queue
     let usb_reader_fut = async move {
-        recv.wait_connection().await;
         loop {
+            recv.wait_connection().await;
             let mut buf: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
-            let len = recv.read_packet(&mut buf).await.unwrap();
-            let _ = rx_pipe.write_all(&buf[0..len]).await;
+            loop {
+                match recv.read_packet(&mut buf).await {
+                    Ok(len) => {
+                        let _ = rx_pipe.write_all(&buf[0..len]).await;
+                    }
+                    Err(embassy_usb::driver::EndpointError::Disabled) => {
+                        break;
+                    }
+                    Err(_) => {
+                        yield_now().await;
+                    }
+                }
+            }
         }
     };
 
     // Writer function, pull blocks of up to MAX_PACKET_SIZE from the tx pub/sub queue and push out to the
     // the USB interface.
     let usb_writer_fut = async {
-        send.wait_connection().await;
         loop {
+            send.wait_connection().await;
             let mut buf: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
-            let len = tx_pipe.read(&mut buf).await;
-            send.write_packet(&mut buf[0..len]).await.unwrap();
+            loop {
+                let len = tx_pipe.read(&mut buf).await;
+                match send.write_packet(&mut buf[0..len]).await {
+                    Ok(()) => {}
+                    Err(embassy_usb::driver::EndpointError::Disabled) => {
+                        break;
+                    }
+                    Err(_) => {
+                        yield_now().await;
+                    }
+                }
+            }
         }
     };
 

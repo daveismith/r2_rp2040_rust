@@ -26,3 +26,6 @@ strip = true  # Automatically strip symbols from the binary.
 debug = 2
 lto = true
 opt-level = "z"
+
+#[patch.crates-io]
+#canadensis_can = { path = "third_party/canadensis_can" }

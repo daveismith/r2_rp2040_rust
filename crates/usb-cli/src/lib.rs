@@ -108,15 +108,21 @@ pub async fn cli_handler<'a>(
     let dispatcher = CommandDispatcher::new(commands);
 
     loop {
-        let mut editor = EditorBuilder::from_slice(&mut buffer)
+        let editor = EditorBuilder::from_slice(&mut buffer)
             .with_slice_history(&mut history)
             .build_async(&mut io)
-            .await
-            .unwrap();
+            .await;
+
+        let Ok(mut editor) = editor else {
+            Timer::after_millis(20).await;
+            continue;
+        };
 
         while let Ok(line) = editor.readline(prompt, &mut io).await {
             //writeln!(io, "my read: '{}'", line).ok();
             dispatcher.dispatch(&line, &mut io).await;
         }
+
+        Timer::after_millis(20).await;
     }
 }

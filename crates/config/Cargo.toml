@@ -12,15 +12,7 @@ license = "MIT or Apache-2.0"
 
 [dependencies]
 async-trait = "0.1"
-#cortex-m = "0.7.7"
-#embedded-io-async = "0.6.1"
-embedded-alloc = "0.6.0"
-#embassy-rp = { version = "0.7.0", features = ["rp2040"] }
-embassy-sync = { version = "0.7.0", features = ["defmt"] }
-#embassy-time = "0.4.0"
-#embassy-usb = { version = "0.5.0", features = ["defmt"] }
-#fixed-queue = "0.5.1"
-#heapless = "0.8.0"
-#noline = "0.5.1"
+embedded-alloc = "0.7.0"
+embassy-sync = { version = "0.8.0", features = ["defmt"] }
 
 dyn-clone = { version = "1", default-features = false }

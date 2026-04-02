@@ -23,17 +23,25 @@ where
         let mut msg: heapless::String<64> = heapless::String::new();
         for (i, word) in args[1..].iter().enumerate() {
             if i > 0 {
-                msg.push(' ').unwrap();
+                if msg.push(' ').is_err() {
+                    writeln!(io, "Message too long").ok();
+                    return;
+                }
             }
-            msg.push_str(word).unwrap();
+            if msg.push_str(word).is_err() {
+                writeln!(io, "Message too long").ok();
+                return;
+            }
         }
 
         writeln!(io, "content: {}", msg).ok();
     }
 }
 
+#[cfg(feature = "rp2040")]
 pub struct BootloadCommand;
 
+#[cfg(feature = "rp2040")]
 #[async_trait(?Send)]
 impl<IO> CommandHandler<IO> for BootloadCommand
 where 
