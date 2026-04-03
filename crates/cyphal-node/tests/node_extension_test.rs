@@ -182,4 +182,3 @@ fn cyphal_handler_noop_handle_execute_command_returns_none() {
     };
     assert_eq!(handler.handle_execute_command(&request), None);
 }
-

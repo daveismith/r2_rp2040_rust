@@ -293,4 +293,3 @@ fn executor_loop_sync(executor: &'static RawExecutor, sleep_tick_count: &AtomicU
         unsafe { executor.poll() };
     }
 }
-
