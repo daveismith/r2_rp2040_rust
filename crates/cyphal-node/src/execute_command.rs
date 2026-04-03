@@ -67,8 +67,9 @@ impl DefaultCommandHandler {
 
     /// Process an `ExecuteCommand` request.
     ///
-    /// Returns the status code and a static human-readable output string for
-    /// inclusion in the response.
+    /// Returns `Some((status, output))` for standard commands that were
+    /// handled, or `None` for unrecognised commands so the caller can
+    /// delegate to a vendor-specific extension handler.
     ///
     /// The `ota` session is needed to start/reject `BEGIN_SOFTWARE_UPDATE`.
     pub(crate) fn handle(
@@ -76,34 +77,34 @@ impl DefaultCommandHandler {
         request: &ExecuteCommandRequest,
         source_node: CanNodeId,
         ota: &mut OtaSession,
-    ) -> (u8, &'static [u8]) {
+    ) -> Option<(u8, &'static [u8])> {
         match request.command {
             ExecuteCommandRequest::COMMAND_IDENTIFY => {
                 log::info!("ExecuteCommand: IDENTIFY");
                 if let Some(cb) = self.identify_cb {
                     cb(Duration::from_secs(5));
                 }
-                (ExecuteCommandResponse::STATUS_SUCCESS, b"identify")
+                Some((ExecuteCommandResponse::STATUS_SUCCESS, b"identify"))
             }
             ExecuteCommandRequest::COMMAND_RESTART => {
                 log::info!("ExecuteCommand: RESTART");
                 PENDING_RESET.store(RESET_SOFT, Ordering::Release);
-                (ExecuteCommandResponse::STATUS_SUCCESS, b"restart")
+                Some((ExecuteCommandResponse::STATUS_SUCCESS, b"restart"))
             }
             ExecuteCommandRequest::COMMAND_FACTORY_RESET => {
                 log::info!("ExecuteCommand: FACTORY_RESET");
                 PENDING_RESET.store(RESET_FACTORY, Ordering::Release);
-                (ExecuteCommandResponse::STATUS_SUCCESS, b"factory_reset")
+                Some((ExecuteCommandResponse::STATUS_SUCCESS, b"factory_reset"))
             }
             ExecuteCommandRequest::COMMAND_BEGIN_SOFTWARE_UPDATE => {
                 if request.parameter.is_empty()
                     || request.parameter.len() > FilePath::MAX_LENGTH as usize
                 {
-                    (ExecuteCommandResponse::STATUS_BAD_PARAMETER, b"bad path")
+                    Some((ExecuteCommandResponse::STATUS_BAD_PARAMETER, b"bad path"))
                 } else if ota.active {
-                    (ExecuteCommandResponse::STATUS_BAD_STATE, b"ota busy")
+                    Some((ExecuteCommandResponse::STATUS_BAD_STATE, b"ota busy"))
                 } else if ota.start(source_node, &request.parameter).is_err() {
-                    (ExecuteCommandResponse::STATUS_BAD_PARAMETER, b"bad path")
+                    Some((ExecuteCommandResponse::STATUS_BAD_PARAMETER, b"bad path"))
                 } else {
                     let path_preview =
                         core::str::from_utf8(&request.parameter).unwrap_or("<non-utf8-path>");
@@ -113,10 +114,11 @@ impl DefaultCommandHandler {
                         request.parameter.len(),
                         path_preview
                     );
-                    (ExecuteCommandResponse::STATUS_SUCCESS, b"ota")
+                    Some((ExecuteCommandResponse::STATUS_SUCCESS, b"ota"))
                 }
             }
-            _ => (ExecuteCommandResponse::STATUS_BAD_COMMAND, b"unsupported"),
+            // Unrecognised command — let the caller try a vendor-specific handler.
+            _ => None,
         }
     }
 }

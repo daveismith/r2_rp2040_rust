@@ -128,6 +128,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="target/thumbv6m-none-eabi/debug/cyphal-template.bin",
         help="Local firmware image served by test file.Read server",
     )
+    parser.addoption(
+        "--angle-subject-id",
+        default=6144,
+        type=int,
+        help="Cyphal subject ID for shoulder-sensor angle publications (default: 6144)",
+    )
+    parser.addoption(
+        "--temp-subject-id",
+        default=6145,
+        type=int,
+        help="Cyphal subject ID for shoulder-sensor temperature publications (default: 6145)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +180,16 @@ def ota_file_path(request: pytest.FixtureRequest) -> str:
 @pytest.fixture(scope="session")
 def ota_image_file(request: pytest.FixtureRequest) -> str:
     return request.config.getoption("--ota-image-file")  # type: ignore[return-value]
+
+
+@pytest.fixture(scope="session")
+def angle_subject_id(request: pytest.FixtureRequest) -> int:
+    return request.config.getoption("--angle-subject-id")  # type: ignore[return-value]
+
+
+@pytest.fixture(scope="session")
+def temp_subject_id(request: pytest.FixtureRequest) -> int:
+    return request.config.getoption("--temp-subject-id")  # type: ignore[return-value]
 
 
 class _PnpAllocator:

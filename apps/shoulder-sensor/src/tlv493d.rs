@@ -189,12 +189,12 @@ where
         let mut b = [0u8; 7];
         match self.i2c.read(self.addr, &mut b[..]).await {
             Ok(()) => {},
-            Err(err) => log::info!("I2C Error: {:?}", err)
+            Err(err) => log::debug!("I2C Error: {:?}", err)
         }
 
         let frm = b[3] & 0b0000_1100;
         if self.last_frm == frm {
-            log::info!("ADC Lockup");
+            log::debug!("ADC Lockup");
             // Reset The Module
             self.configure(Mode::Master, true).await;
         } else {

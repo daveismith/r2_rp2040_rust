@@ -47,12 +47,12 @@ use core::ops::Range;
 use canadensis::core::time::milliseconds;
 use canadensis::core::Priority;
 use canadensis::Node as NodeTrait;
-use canadensis::{nb, TransferHandler};
+use canadensis::{nb};
 use canadensis::node::{BasicNode, CoreNode};
 use canadensis::node::data_types::GetInfoResponse;
 use canadensis_can::queue::{ArrayQueue, SingleQueueDriver};
 use canadensis_can::{
-    CanReceiver, CanTransferIdTracker, CanTransmitter, CanTransport, Mtu,
+    CanReceiver, CanTransferIdTracker, CanTransmitter, Mtu,
 };
 use canadensis_data_types::uavcan::file::path_2_0::Path as FilePath;
 use canadensis_data_types::uavcan::file::read_1_1::{ReadRequest, ReadResponse};
@@ -139,7 +139,7 @@ type FlashPartition<'a> = Partition<'a, CriticalSectionRawMutex, FlashType>;
 
 // ---- Constants ------------------------------------------------------------
 
-const MAX_PUBLISH_TOPICS: usize = 4;
+const MAX_PUBLISH_TOPICS: usize = 6;
 const MAX_REQUEST_SERVICES: usize = 4;
 const TX_QUEUE_SIZE: usize = 32;
 const RX_DRAIN_BUDGET: usize = 128;
@@ -250,7 +250,7 @@ async fn drive_ota_step<T, E>(
     updater: &mut FirmwareUpdater<'_, FlashPartition<'_>, FlashPartition<'_>>,
 ) where
     T: embassy_rp::spi::Instance,
-    E: TransferHandler<CanTransport>,
+    E: NodeExtension,
 {
     let ota = &mut handler.ota;
     if !ota.active {
@@ -570,6 +570,11 @@ where
         log::warn!("can: extension register_subscriptions failed");
     }
 
+    // ---- Extension publishers ---------------------------------------------
+    if !handler.register_publishers(&mut node) {
+        log::warn!("can: extension register_publishers failed");
+    }
+
     // ---- Phase 3: OTA setup -----------------------------------------------
 
     let updater_config = ota_updater_from_linkerfile(flash, flash);
@@ -648,7 +653,7 @@ where
             let can_wait_timeout = if handler.is_ota_active() {
                 CAN_WAIT_TIMEOUT_OTA
             } else {
-                CAN_WAIT_TIMEOUT_IDLE
+            	handler.preferred_loop_period().min(CAN_WAIT_TIMEOUT_IDLE)
             };
             let _ = with_timeout(can_wait_timeout, int.wait_for_low()).await;
         }
@@ -710,6 +715,9 @@ where
                 break;
             }
         }
+
+        // ---- Extension tick: rate-managed publishing ----------------------
+        handler.on_tick(&mut node);
 
         // ---- Drive OTA state machine --------------------------------------
         drive_ota_step(&mut handler, &mut node, &read_service, &mut updater).await;

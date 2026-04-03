@@ -4,6 +4,7 @@
 mod can_tasks;
 mod cli_commands;
 mod cli_task;
+mod settings;
 mod tlv493d;
 
 // Use of a mod or pub mod is not actually necessary.
@@ -12,9 +13,10 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
+use core::cell::RefCell;
 use core::ops::Range;
 use core::ptr::addr_of_mut;
-use core::sync::atomic::{AtomicI16, Ordering};
+use core::sync::atomic::Ordering;
 
 extern crate alloc;
 use embassy_sync::pipe::Pipe;
@@ -33,24 +35,20 @@ use embassy_rp::spi::{self, Spi};
 use embassy_rp::bind_interrupts;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Instant, Ticker};
-use portable_atomic::AtomicU64;
+use portable_atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64};
 use signalo_filters::traits::WithConfig;
 use static_cell::StaticCell;
-use usb_cli;
-use canbus::{SpiBusMutex, SpiBusType};
-use canbus::can_updater::can_updater_task;
+use cyphal_node::node_task::{FlashMutex as CyphalFlashMutex, SpiBusMutex, SpiBusType};
 use usb_cli::cpu_handler::{ GLOBAL_CPU0_LOADS, GLOBAL_CPU1_LOADS };
 
-use can_tasks::{can_handler, can_reporter};
+use can_tasks::{can_handler, settings_persist_task};
 use cli_task::cli_task;
 
 use usb_serial::usb_handler;
 use usb_serial::UsbPipe;
-
-use core::cell::RefCell;
-use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_sync::mutex::Mutex;
 
 use signalo_filters::traits::Filter;
 use signalo_filters::mean::mean::Mean;
@@ -62,15 +60,27 @@ use {defmt_rtt as _, panic_probe as _}; // global logger
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
-static TLV_ANGLE: AtomicI16 = AtomicI16::new(0);
-static TLV_TEMP: AtomicI16 = AtomicI16::new(0);
+/// Magnetic angle from the TLV493D sensor, stored as `f32::to_bits()` (radians).
+pub static TLV_ANGLE: AtomicU32 = AtomicU32::new(0);
+/// Sensor temperature in °C × 100 (i16 stored as u16 bit-cast to AtomicI16 equivalent).
+pub static TLV_TEMP: portable_atomic::AtomicI16 = portable_atomic::AtomicI16::new(0);
 pub static UPTIME: AtomicU64 = AtomicU64::new(0);
 
-const FLASH_SIZE: usize = 8 * 1024 * 1024;
-const FLASH_RANGE: Range<u32> = 0x480000..0x500000;
+/// Zero-offset in radians, stored as `f32::to_bits()`.
+pub static ZERO_OFFSET: AtomicU32 = AtomicU32::new(0);
+/// Cyphal subject ID for angle publications (vendor-specific range 6144–7167).
+pub static ANGLE_SUBJECT_ID: AtomicU16 = AtomicU16::new(settings::DEFAULT_ANGLE_SUBJECT_ID);
+/// Cyphal subject ID for temperature publications (vendor-specific range 6144–7167).
+pub static TEMP_SUBJECT_ID: AtomicU16 = AtomicU16::new(settings::DEFAULT_TEMP_SUBJECT_ID);
+/// Set to `true` when `COMMAND_ZERO` is received via CAN to trigger NVS persistence.
+pub static PENDING_ZERO_PERSIST: AtomicBool = AtomicBool::new(false);
 
-type FlashType = embassy_rp::flash::Flash<'static, peripherals::FLASH, flash::Async, FLASH_SIZE>;
-type FlashMutex = Mutex<CriticalSectionRawMutex, FlashType>;
+const FLASH_SIZE: usize = 8 * 1024 * 1024;
+/// Flash address range reserved for NVS settings storage.
+pub(crate) const NVS_RANGE: Range<u32> = 0x480000..0x500000;
+
+pub type FlashType = embassy_rp::flash::Flash<'static, peripherals::FLASH, flash::Async, FLASH_SIZE>;
+pub type FlashMutex = CyphalFlashMutex;
 type I2c1Bus = Mutex<NoopRawMutex, I2c<'static, peripherals::I2C1, i2c::Async>>;
 
 bind_interrupts!(struct Irqs {
@@ -99,7 +109,6 @@ async fn cpu_usage() {
         previous_sleep0_tick = current_sleep0_tick;
         previous_sleep1_tick = current_sleep1_tick;
 
-        //log::info!("Cpu usage: {}%", usage * 100f32);
         GLOBAL_CPU0_LOADS.lock(|cell| {
             let mut loads = cell.get();
             loads.update(usage0 * 100.0);
@@ -146,7 +155,8 @@ async fn tlv493d_task(i2c_bus: &'static I2c1Bus) {
 
         if iteration == 0 {
             let result_angle_rad = angle_ab.filter(mean_angle);
-            TLV_ANGLE.store((result_angle_rad.to_degrees() * 100.0) as i16, Ordering::Relaxed);
+            // Store radians directly as f32 bit pattern in an AtomicU32.
+            TLV_ANGLE.store(result_angle_rad.to_bits(), Ordering::Relaxed);
             TLV_TEMP.store((mean_temp * 100.0) as i16, Ordering::Relaxed);
         }
 
@@ -155,11 +165,8 @@ async fn tlv493d_task(i2c_bus: &'static I2c1Bus) {
     }
 }
 
-//#[embassy_executor::main]
 #[embassy_executor::task]
 async fn my_main(mut watchdog: Watchdog) {
-    //let p = embassy_rp::init(Default::default());
-    // The core loop
     let mut ticker = Ticker::every(Duration::from_secs(1));
     loop {
         watchdog.feed();
@@ -180,7 +187,9 @@ async fn core1_task() {
 static EXECUTOR_0: StaticCell<RawExecutor> = StaticCell::new();
 static SLEEP_TICKS_0: AtomicU64 = AtomicU64::new(0);
 
-static mut CORE1_STACK: Stack<4096> = Stack::new();
+// The TLV493D task keeps sizeable filter state on core1; 4 KiB can overflow
+// once async frame overhead is included and cause early hard-fault resets.
+static mut CORE1_STACK: Stack<8192> = Stack::new();
 static EXECUTOR_1: StaticCell<RawExecutor> = StaticCell::new();
 static SLEEP_TICKS_1: AtomicU64 = AtomicU64::new(0);
 
@@ -188,22 +197,35 @@ static SLEEP_TICKS_1: AtomicU64 = AtomicU64::new(0);
 fn main() -> ! {
     {
         use core::mem::MaybeUninit;
-        const HEAP_SIZE: usize = 1280;
+        const HEAP_SIZE: usize = 16 * 1024;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
     }
 
     let p = embassy_rp::init(Default::default());
-   
+
+    // Read the flash unique ID before tasks start (needed for Cyphal PnP).
+    let mut flash_raw = embassy_rp::flash::Flash::<_, _, FLASH_SIZE>::new(p.FLASH, p.DMA_CH1);
+    let node_unique_id = {
+        let mut uid = [0u8; 16];
+        let mut flash_id = [0u8; 8];
+        if flash_raw.blocking_unique_id(&mut flash_id).is_ok() {
+            uid[..8].copy_from_slice(&flash_id);
+        }
+        uid
+    };
+
+    // Wrap flash in the shared async mutex used by Cyphal and NVS.
+    // NVS settings are loaded asynchronously in settings_persist_task before
+    // the Cyphal PnP phase completes, so they are available before any
+    // publishing begins.
+    static FLASH: StaticCell<FlashMutex> = StaticCell::new();
+    let flash = FLASH.init(Mutex::new(flash_raw));
+
     // Override bootloader watchdog
     let mut watchdog = Watchdog::new(p.WATCHDOG);
     watchdog.start(Duration::from_secs(8));
     watchdog.feed();
-
-    // Set Up The Flash Peripheral For Sharing
-    let flash = embassy_rp::flash::Flash::<_, _, FLASH_SIZE>::new(p.FLASH, p.DMA_CH1);
-    static FLASH: StaticCell<FlashMutex> = StaticCell::new();
-    let flash = FLASH.init(Mutex::new(flash));
 
     // Set Up The USB Handler
     static SHARED_RX_PIPE: StaticCell<UsbPipe> = StaticCell::new();
@@ -212,8 +234,8 @@ fn main() -> ! {
     let tx_pipe = SHARED_TX_PIPE.init(Pipe::new());
     let (usb_rx_reader, usb_rx_writer) = rx_pipe.split();
     let (usb_tx_reader, usb_tx_writer) = tx_pipe.split();
- 
-     // I2C Setup
+
+    // I2C Setup
     let i2c_config = {
         let mut config = i2c::Config::default();
         config.frequency = 400_000;
@@ -224,19 +246,18 @@ fn main() -> ! {
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
 
     // The feather has a MCP25625, charge bay has MCP2515
-    // CAN is SPI0.
-    // 3MHz seems to be the fastest that this runs out of the box.
+    // CAN is SPI1.  3 MHz seems to be the fastest that this runs reliably.
     let mut config = spi::Config::default();
-    config.frequency = 3_0000_000; // 1MHz
+    config.frequency = 10_000_000;
 
-    // Setup SPI bus
     let spi = Spi::new_blocking(p.SPI1, p.PIN_14, p.PIN_15, p.PIN_8, config);
-    let spi_bus: BlockingMutex<CriticalSectionRawMutex, RefCell<SpiBusType<'_, peripherals::SPI1>>>  = BlockingMutex::new(RefCell::new(spi));
+    let spi_bus: BlockingMutex<CriticalSectionRawMutex, RefCell<SpiBusType<peripherals::SPI1>>> =
+        BlockingMutex::new(RefCell::new(spi));
     static MY_SPI_BUS: StaticCell<SpiBusMutex<peripherals::SPI1>> = StaticCell::new();
     let spi_bus = MY_SPI_BUS.init(spi_bus);
-    let can_cs = Output::new(p.PIN_19, Level::High);
+    let can_cs    = Output::new(p.PIN_19, Level::High);
     let can_reset = Output::new(p.PIN_18, Level::Low);
-    let can_int = Input::new(p.PIN_22, Pull::None);
+    let can_int   = Input::new(p.PIN_22, Pull::Up);
 
     // Set Up The Core 1 Executor
     spawn_core1(
@@ -251,17 +272,14 @@ fn main() -> ! {
         },
     );
 
-
     // Set Up The Core 0 Executor
     let core0_executor = EXECUTOR_0.init(RawExecutor::new(usize::MAX as *mut ()));
     let spawner = core0_executor.spawner();
 
-    unwrap!(spawner.spawn(usb_handler(p.USB, "test", usb_rx_writer, usb_tx_reader)));
-    //unwrap!(spawner.spawn(tlv493d_task(i2c_bus)));
-    unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, FLASH_RANGE)));
+    unwrap!(spawner.spawn(usb_handler(p.USB, "shoulder-sensor", usb_rx_writer, usb_tx_reader)));
+    unwrap!(spawner.spawn(can_handler(spi_bus, can_cs, can_reset, can_int, flash, node_unique_id)));
+    unwrap!(spawner.spawn(settings_persist_task(flash)));
     unwrap!(spawner.spawn(cli_task(flash, usb_tx_writer, usb_rx_reader)));
-    unwrap!(spawner.spawn(can_updater_task(flash)));     // Set Up The Can Updater Task
-    unwrap!(spawner.spawn(can_reporter()));
     unwrap!(spawner.spawn(cpu_usage()));
     unwrap!(spawner.spawn(my_main(watchdog)));
 

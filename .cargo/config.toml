@@ -23,6 +23,7 @@ build-charge-bay = ["build", "-p", "charge-bay", "--target", "thumbv6m-none-eabi
 run-charge-bay = ["run", "-p", "charge-bay", "--bin", "charge-bay", "--target", "thumbv6m-none-eabi"]
 
 build-shoulder-sensor = ["build", "-p", "shoulder-sensor", "--target", "thumbv6m-none-eabi"]
+binary-shoulder-sensor = ["objcopy", "--release", "--bin", "shoulder-sensor", "--", "-O", "binary", "shoulder-sensor.bin"]
 run-shoulder-sensor = ["run", "-p", "shoulder-sensor", "--bin", "shoulder-sensor", "--target", "thumbv6m-none-eabi"]
 
 # boot
