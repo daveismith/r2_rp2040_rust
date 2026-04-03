@@ -214,7 +214,7 @@ fn main() -> ! {
 
     // SPI bus for MCP25xx.  3 MHz is reliable on this hardware.
     let mut spi_config = spi::Config::default();
-    spi_config.frequency = 3_000_000;
+    spi_config.frequency = 10_000_000;
     let spi = Spi::new_blocking(p.SPI1, p.PIN_14, p.PIN_15, p.PIN_8, spi_config);
     let spi_bus = BlockingMutex::<CriticalSectionRawMutex, _>::new(RefCell::new(spi));
     static MY_SPI_BUS: StaticCell<SpiBusMutex<peripherals::SPI1>> = StaticCell::new();

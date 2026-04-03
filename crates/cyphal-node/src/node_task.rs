@@ -143,10 +143,11 @@ const MAX_PUBLISH_TOPICS: usize = 4;
 const MAX_REQUEST_SERVICES: usize = 4;
 const TX_QUEUE_SIZE: usize = 32;
 const RX_DRAIN_BUDGET: usize = 128;
+const RX_DRAIN_EXTRA_ROUNDS_OTA: usize = 4;
 const EXECUTE_COMMAND_PAYLOAD_MAX: usize = 300;
 const CAN_WAIT_TIMEOUT_IDLE: Duration = Duration::from_millis(20);
-const CAN_WAIT_TIMEOUT_OTA: Duration = Duration::from_millis(1);
-const LOOP_SLEEP_OTA: Duration = Duration::from_micros(50);
+const CAN_WAIT_TIMEOUT_OTA: Duration = Duration::from_micros(100);
+const LOOP_SLEEP_OTA: Duration = Duration::from_micros(20);
 
 // ---- Global state ---------------------------------------------------------
 
@@ -642,12 +643,15 @@ where
         }
 
         // ---- Wait for CAN activity ----------------------------------------
-        let can_wait_timeout = if handler.is_ota_active() {
-            CAN_WAIT_TIMEOUT_OTA
-        } else {
-            CAN_WAIT_TIMEOUT_IDLE
-        };
-        let _ = with_timeout(can_wait_timeout, int.wait_for_low()).await;
+        // If INT is already low, skip the await and drain immediately.
+        if int.is_high() {
+            let can_wait_timeout = if handler.is_ota_active() {
+                CAN_WAIT_TIMEOUT_OTA
+            } else {
+                CAN_WAIT_TIMEOUT_IDLE
+            };
+            let _ = with_timeout(can_wait_timeout, int.wait_for_low()).await;
+        }
 
         // ---- Per-second maintenance (heartbeat, error reporting) ----------
         let now = Instant::now();
@@ -687,8 +691,22 @@ where
         }
 
         // ---- Drain incoming frames ----------------------------------------
-        for _ in 0..RX_DRAIN_BUDGET {
-            if node.receive(&mut handler).is_err() {
+        // During OTA, response frames can arrive in bursts. Drain multiple
+        // rounds, but cap the rounds so OTA request progress never starves.
+        let max_rounds = if handler.is_ota_active() {
+            1 + RX_DRAIN_EXTRA_ROUNDS_OTA
+        } else {
+            1
+        };
+        for _ in 0..max_rounds {
+            let mut drained_any = false;
+            for _ in 0..RX_DRAIN_BUDGET {
+                if node.receive(&mut handler).is_err() {
+                    break;
+                }
+                drained_any = true;
+            }
+            if !drained_any {
                 break;
             }
         }
@@ -708,7 +726,13 @@ where
 
         let _ = node.node_mut().flush();
 
-        let loop_sleep = if handler.is_ota_active() {
+        let ota_active = handler.is_ota_active();
+        // While OTA is active and INT remains asserted, continue immediately
+        // to keep draining burst traffic without an added sleep gap.
+        if ota_active && int.is_low() {
+            continue;
+        }
+        let loop_sleep = if ota_active {
             LOOP_SLEEP_OTA
         } else {
             LOOP_SLEEP_IDLE

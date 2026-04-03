@@ -41,7 +41,7 @@ async def test_get_info_software_version(gi_client: pycyphal.presentation.Client
     assert result is not None, "GetInfo timed out"
     response, _ = result
     assert response.software_version.major == 0  # type: ignore[attr-defined]
-    assert response.software_version.minor == 3  # type: ignore[attr-defined]
+    assert response.software_version.minor == 4  # type: ignore[attr-defined]
 
 
 async def test_get_info_unique_id(gi_client: pycyphal.presentation.Client) -> None:
