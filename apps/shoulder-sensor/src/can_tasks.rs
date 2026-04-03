@@ -171,6 +171,12 @@ impl NodeExtension for ShoulderExtension {
     /// Called on every node loop iteration.
     ///
     /// Checks both rate deadlines; publishes whichever messages are due.
+    /// Deadlines are advanced like `embassy_time::Ticker` — relative to the
+    /// previous deadline (`+= period`) rather than to the current time
+    /// (`= now + period`).  This prevents drift accumulation across many
+    /// iterations.  A catch-up guard resets the deadline to `now + period`
+    /// when the loop has fallen more than one period behind, so a burst of
+    /// back-to-back publications never occurs.
     /// Does not block or await.
     fn on_tick<N>(&mut self, node: &mut N)
     where
@@ -189,7 +195,14 @@ impl NodeExtension for ShoulderExtension {
             let msg = AngleScalar { radian: value };
             let _ = node.publish(subject, &msg);
 
-            self.next_angle_at = now + Duration::from_hz(100);
+            // Advance deadline like a Ticker: from the last scheduled time,
+            // not from `now`, to avoid drift.
+            self.next_angle_at += Duration::from_hz(100);
+            // Catch-up guard: if we have fallen more than one period behind
+            // (e.g. after a long blocking operation), reset to avoid a burst.
+            if self.next_angle_at < now {
+                self.next_angle_at = now + Duration::from_hz(100);
+            }
         }
 
         // ---- Temperature publication (1 Hz) --------------------------------
@@ -202,7 +215,11 @@ impl NodeExtension for ShoulderExtension {
             let msg = TempScalar { kelvin };
             let _ = node.publish(subject, &msg);
 
-            self.next_temp_at = now + Duration::from_hz(1);
+            // Same Ticker-style advancement for the temperature deadline.
+            self.next_temp_at += Duration::from_hz(1);
+            if self.next_temp_at < now {
+                self.next_temp_at = now + Duration::from_hz(1);
+            }
         }
     }
 
@@ -230,12 +247,16 @@ impl NodeExtension for ShoulderExtension {
         }
     }
 
-    /// Request a fast loop period so the 100 Hz angle publisher is served
-    /// within its 10 ms deadline.
+    /// Request a loop period that guarantees at least two iterations per
+    /// angle-publish interval.
+    ///
+    /// The angle is published at 100 Hz (every 10 ms).  Using half that
+    /// period (5 ms / 200 Hz) ensures the main loop visits `on_tick` at
+    /// roughly twice the publish rate, giving Ticker-style precision: even
+    /// if one iteration fires a little late the next deadline is still
+    /// caught within the same 10 ms window.
     fn preferred_loop_period(&self) -> Duration {
-        // 8 ms gives ~125 Hz iteration rate, safely above the 100 Hz
-        // angle-publication deadline even under jitter.
-        Duration::from_millis(8)
+        Duration::from_hz(200)
     }
 }
 
