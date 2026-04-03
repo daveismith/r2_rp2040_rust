@@ -187,7 +187,9 @@ async fn core1_task() {
 static EXECUTOR_0: StaticCell<RawExecutor> = StaticCell::new();
 static SLEEP_TICKS_0: AtomicU64 = AtomicU64::new(0);
 
-static mut CORE1_STACK: Stack<4096> = Stack::new();
+// The TLV493D task keeps sizeable filter state on core1; 4 KiB can overflow
+// once async frame overhead is included and cause early hard-fault resets.
+static mut CORE1_STACK: Stack<8192> = Stack::new();
 static EXECUTOR_1: StaticCell<RawExecutor> = StaticCell::new();
 static SLEEP_TICKS_1: AtomicU64 = AtomicU64::new(0);
 
@@ -246,7 +248,7 @@ fn main() -> ! {
     // The feather has a MCP25625, charge bay has MCP2515
     // CAN is SPI1.  3 MHz seems to be the fastest that this runs reliably.
     let mut config = spi::Config::default();
-    config.frequency = 3_000_000;
+    config.frequency = 10_000_000;
 
     let spi = Spi::new_blocking(p.SPI1, p.PIN_14, p.PIN_15, p.PIN_8, config);
     let spi_bus: BlockingMutex<CriticalSectionRawMutex, RefCell<SpiBusType<peripherals::SPI1>>> =

@@ -32,7 +32,7 @@ async def test_get_info_node_name(gi_client: pycyphal.presentation.Client) -> No
     assert result is not None, "GetInfo timed out"
     response, _ = result
     name = bytes(response.name).decode("ascii")  # type: ignore[attr-defined]
-    assert name == "cyphal-template", f"Unexpected node name: {name!r}"
+    assert name == "shoulder-sensor", f"Unexpected node name: {name!r}"
 
 
 async def test_get_info_software_version(gi_client: pycyphal.presentation.Client) -> None:
@@ -41,7 +41,7 @@ async def test_get_info_software_version(gi_client: pycyphal.presentation.Client
     assert result is not None, "GetInfo timed out"
     response, _ = result
     assert response.software_version.major == 0  # type: ignore[attr-defined]
-    assert response.software_version.minor == 4  # type: ignore[attr-defined]
+    assert response.software_version.minor == 1  # type: ignore[attr-defined]
 
 
 async def test_get_info_unique_id(gi_client: pycyphal.presentation.Client) -> None:
