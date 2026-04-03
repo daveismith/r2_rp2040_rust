@@ -139,7 +139,7 @@ type FlashPartition<'a> = Partition<'a, CriticalSectionRawMutex, FlashType>;
 
 // ---- Constants ------------------------------------------------------------
 
-const MAX_PUBLISH_TOPICS: usize = 6;
+const MAX_PUBLISH_TOPICS: usize = 8;
 const MAX_REQUEST_SERVICES: usize = 4;
 const TX_QUEUE_SIZE: usize = 32;
 const RX_DRAIN_BUDGET: usize = 128;
