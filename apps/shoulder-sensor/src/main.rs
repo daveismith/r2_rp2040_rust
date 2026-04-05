@@ -13,7 +13,7 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::ops::Range;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::Ordering;
@@ -65,6 +65,8 @@ pub static TLV_ANGLE: AtomicU32 = AtomicU32::new(0);
 /// Sensor temperature in °C × 100 (i16 stored as u16 bit-cast to AtomicI16 equivalent).
 pub static TLV_TEMP: portable_atomic::AtomicI16 = portable_atomic::AtomicI16::new(0);
 pub static UPTIME: AtomicU64 = AtomicU64::new(0);
+pub static NODE_UNIQUE_ID: BlockingMutex<CriticalSectionRawMutex, Cell<[u8; 16]>> =
+    BlockingMutex::new(Cell::new([0u8; 16]));
 
 /// Zero-offset in radians, stored as `f32::to_bits()`.
 pub static ZERO_OFFSET: AtomicU32 = AtomicU32::new(0);
@@ -214,6 +216,7 @@ fn main() -> ! {
         }
         uid
     };
+    NODE_UNIQUE_ID.lock(|cell| cell.set(node_unique_id));
 
     // Wrap flash in the shared async mutex used by Cyphal and NVS.
     // NVS settings are loaded asynchronously in settings_persist_task before

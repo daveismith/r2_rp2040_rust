@@ -260,6 +260,14 @@ impl NodeExtension for ShoulderExtension {
     }
 }
 
+// ---- Node-ID helper -------------------------------------------------------
+
+/// Returns the dynamically allocated Cyphal node ID, or `None` if PnP
+/// allocation has not yet completed.
+pub fn assigned_node_id() -> Option<u8> {
+    cyphal_node::assigned_node_id()
+}
+
 // ---- Embassy task ---------------------------------------------------------
 
 /// Main Cyphal task for the shoulder-sensor.

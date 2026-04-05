@@ -8,7 +8,7 @@ mod identify_led;
 
 extern crate alloc;
 use can_tasks::can_handler;
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::ops::Range;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::Ordering;
@@ -51,6 +51,8 @@ pub mod built_info {
 static HEAP: Heap = Heap::empty();
 
 pub static UPTIME: AtomicU64 = AtomicU64::new(0);
+pub static NODE_UNIQUE_ID: BlockingMutex<CriticalSectionRawMutex, Cell<[u8; 16]>> =
+    BlockingMutex::new(Cell::new([0u8; 16]));
 
 // ---- Flash / SPI type aliases (used by main to set up shared resources) --
 
@@ -196,6 +198,7 @@ fn main() -> ! {
     // Read flash unique ID before tasks start.
     let mut flash = embassy_rp::flash::Flash::<_, _, FLASH_SIZE>::new(p.FLASH, p.DMA_CH1);
     let node_unique_id = read_unique_id(&mut flash);
+    NODE_UNIQUE_ID.lock(|cell| cell.set(node_unique_id));
     static FLASH: StaticCell<FlashMutex> = StaticCell::new();
     let flash = FLASH.init(Mutex::new(flash));
 
