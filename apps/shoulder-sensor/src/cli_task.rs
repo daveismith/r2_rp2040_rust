@@ -14,6 +14,12 @@ pub async fn cli_task(
     let bootload = usb_cli::Command::new("bootload", "Launch USB Bootloader",  usb_cli::handlers::BootloadCommand);
     let cpu     = usb_cli::Command::new("cpu",     "Check CPU Usage",          usb_cli::cpu_handler::CpuCommand);
     let restart = usb_cli::Command::new("restart", "Restart the system",       usb_cli::handlers::RestartCommand);
+    let node_id = usb_cli::Command::new("node-id", "Show current Cyphal node ID", cli_commands::NodeIdCommand);
+    let node_unique_id = usb_cli::Command::new(
+        "node-unique-id",
+        "Show Cyphal node unique ID",
+        cli_commands::NodeUniqueIdCommand,
+    );
 
     // Sensor / node commands
     let uptime  = usb_cli::Command::new("uptime",  "Check uptime of the device",          cli_commands::UptimeCommand);
@@ -26,7 +32,20 @@ pub async fn cli_task(
         cli_commands::SubjectCommand { flash },
     );
 
-    let commands = &[version, echo, uptime, angle, temp, zero, subject, bootload, cpu, restart];
+    let commands = &[
+        version,
+        echo,
+        uptime,
+        angle,
+        temp,
+        zero,
+        subject,
+        node_id,
+        node_unique_id,
+        bootload,
+        cpu,
+        restart,
+    ];
     let prompt = "> ";
     usb_cli::cli_handler(tx, rx, commands, prompt).await;
 }

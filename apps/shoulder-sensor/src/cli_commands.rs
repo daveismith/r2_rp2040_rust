@@ -6,8 +6,12 @@ use core::sync::atomic::Ordering;
 use embedded_io_async::Write as AsyncWrite;
 
 use crate::built_info;
+use crate::can_tasks;
 use crate::settings::{self, is_valid_subject_id, ShoulderSettings};
-use crate::{ANGLE_SUBJECT_ID, NVS_RANGE, TEMP_SUBJECT_ID, TLV_ANGLE, TLV_TEMP, UPTIME, ZERO_OFFSET};
+use crate::{
+    ANGLE_SUBJECT_ID, NODE_UNIQUE_ID, NVS_RANGE, TEMP_SUBJECT_ID, TLV_ANGLE, TLV_TEMP, UPTIME,
+    ZERO_OFFSET,
+};
 
 use usb_cli::CommandHandler;
 
@@ -216,5 +220,40 @@ where
                 writeln!(io, "Unknown kind '{}'. Use 'angle' or 'temp'.", kind).ok();
             }
         }
+    }
+}
+
+pub struct NodeIdCommand;
+
+#[async_trait(?Send)]
+impl<IO> CommandHandler<IO> for NodeIdCommand
+where
+    IO: AsyncWrite + FmtWrite,
+{
+    async fn execute(&self, _args: &[&str], io: &mut IO) {
+        if let Some(id) = can_tasks::assigned_node_id() {
+            writeln!(io, "Node ID: {}", id).ok();
+        } else {
+            writeln!(io, "Node ID: unassigned (waiting for PnP allocation)").ok();
+        }
+    }
+}
+
+pub struct NodeUniqueIdCommand;
+
+#[async_trait(?Send)]
+impl<IO> CommandHandler<IO> for NodeUniqueIdCommand
+where
+    IO: AsyncWrite + FmtWrite,
+{
+    async fn execute(&self, _args: &[&str], io: &mut IO) {
+        NODE_UNIQUE_ID.lock(|cell| {
+            let unique_id = cell.get();
+            write!(io, "Node Unique ID: ").ok();
+            for b in unique_id {
+                write!(io, "{:02x}", b).ok();
+            }
+            writeln!(io).ok();
+        });
     }
 }
